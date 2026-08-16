@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Ryde Fashion & Authentic Bags and Apparel
 
 A full-stack prototype: a React storefront + a separate admin dashboard,
@@ -343,3 +344,7 @@ Base URL: `http://localhost:4000/api`
 | POST | `/tickets` | — | Submit a ticket |
 | POST | `/tickets/:id/reply` | admin | Reply to a ticket — sends a real email |
 | PATCH | `/tickets/:id/resolve` | admin | Mark a ticket resolved |
+=======
+# Ryde-Fashion
+Ryde Fashion is a modern e-commerce website designed to provide a seamless and stylish online shopping experience. The platform showcases fashion products with organized categories, product details, user authentication, and an easy-to-use interface for browsing and shopping. 
+>>>>>>> a25df189a720751b71a50d1c44ddb651f9a831e4
