@@ -18,8 +18,10 @@ export function verifyPassword(password, stored) {
 }
 
 // --- Sessions (separate namespace from admin sessions in server/auth.js) ---
+// Persisted in SQLite rather than kept in memory, so an active customer
+// stays signed in across server restarts (deploys, crashes, `--watch`
+// reloads during development) instead of being logged out every time.
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — customers expect to stay signed in
-const sessions = new Map(); // token -> customerId
 
 function getToken(req) {
   const header = req.headers.authorization || "";
@@ -28,30 +30,33 @@ function getToken(req) {
 
 export function issueSession(customerId) {
   const token = crypto.randomBytes(24).toString("hex");
-  sessions.set(token, { customerId, expiresAt: Date.now() + SESSION_TTL_MS });
+  db.prepare("INSERT INTO customer_sessions (token, customer_id, expires_at) VALUES (?, ?, ?)")
+    .run(token, customerId, Date.now() + SESSION_TTL_MS);
   return token;
 }
 
 export function endSession(token) {
-  if (token) sessions.delete(token);
+  if (token) db.prepare("DELETE FROM customer_sessions WHERE token = ?").run(token);
 }
 
 export function requireCustomer(req, res, next) {
   const token = getToken(req);
-  const session = token && sessions.get(token);
+  const session = token && db.prepare("SELECT * FROM customer_sessions WHERE token = ?").get(token);
 
-  if (!session || session.expiresAt < Date.now()) {
-    if (token) sessions.delete(token);
+  if (!session || session.expires_at < Date.now()) {
+    if (token) db.prepare("DELETE FROM customer_sessions WHERE token = ?").run(token);
     return res.status(401).json({ error: "Not signed in. Please log in again." });
   }
 
-  const customer = db.prepare("SELECT * FROM customers WHERE id = ?").get(session.customerId);
+  const customer = db.prepare("SELECT * FROM customers WHERE id = ?").get(session.customer_id);
   if (!customer || customer.status === "suspended") {
-    sessions.delete(token);
+    db.prepare("DELETE FROM customer_sessions WHERE token = ?").run(token);
     return res.status(401).json({ error: "This account is no longer active." });
   }
 
-  sessions.set(token, { ...session, expiresAt: Date.now() + SESSION_TTL_MS }); // sliding expiry
+  // Sliding expiry: any authenticated request extends the session.
+  db.prepare("UPDATE customer_sessions SET expires_at = ? WHERE token = ?")
+    .run(Date.now() + SESSION_TTL_MS, token);
   req.customer = customer;
   next();
 }

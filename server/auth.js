@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { db } from "./db/index.js";
 
 // Hardcoded admin credentials for this prototype. In a real production
 // app these would be hashed + stored in the database (or a proper auth
@@ -6,10 +7,15 @@ import crypto from "crypto";
 const ADMIN_USERNAME = "RydeAdmin";
 const ADMIN_PASSWORD = "RydenSito1004_";
 
+// Sessions are persisted in SQLite (not kept in memory) so an active admin
+// login survives server restarts — deploys, crashes, or `--watch` reloads
+// during development — instead of getting signed out every time.
 const SESSION_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
-const sessions = new Map(); // token -> expiresAt
 
 // --- Basic brute-force protection ---
+// Login-attempt counters are fine to keep in memory: losing them on a
+// restart just means a temporary lockout resets early, which isn't a
+// security regression worth persisting to disk for.
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 5 * 60 * 1000; // 5 minutes
 const attempts = new Map(); // ip -> { count, lockedUntil }
@@ -31,7 +37,8 @@ export function login(req, res) {
   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
     attempts.delete(ip);
     const token = crypto.randomBytes(24).toString("hex");
-    sessions.set(token, Date.now() + SESSION_TTL_MS);
+    db.prepare("INSERT INTO admin_sessions (token, expires_at) VALUES (?, ?)")
+      .run(token, Date.now() + SESSION_TTL_MS);
     return res.json({ token, expiresIn: SESSION_TTL_MS });
   }
 
@@ -53,7 +60,7 @@ export function login(req, res) {
 
 export function logout(req, res) {
   const token = getToken(req);
-  if (token) sessions.delete(token);
+  if (token) db.prepare("DELETE FROM admin_sessions WHERE token = ?").run(token);
   res.status(204).end();
 }
 
@@ -64,14 +71,15 @@ function getToken(req) {
 
 export function requireAdmin(req, res, next) {
   const token = getToken(req);
-  const expiresAt = token && sessions.get(token);
+  const session = token && db.prepare("SELECT * FROM admin_sessions WHERE token = ?").get(token);
 
-  if (!expiresAt || expiresAt < Date.now()) {
-    if (token) sessions.delete(token);
+  if (!session || session.expires_at < Date.now()) {
+    if (token) db.prepare("DELETE FROM admin_sessions WHERE token = ?").run(token);
     return res.status(401).json({ error: "Not authenticated. Please log in again." });
   }
 
   // Sliding expiry: any authenticated request extends the session.
-  sessions.set(token, Date.now() + SESSION_TTL_MS);
+  db.prepare("UPDATE admin_sessions SET expires_at = ? WHERE token = ?")
+    .run(Date.now() + SESSION_TTL_MS, token);
   next();
 }

@@ -82,6 +82,17 @@ CREATE TABLE IF NOT EXISTS tickets (
   date TEXT NOT NULL DEFAULT (date('now'))
 );
 
+CREATE TABLE IF NOT EXISTS customer_sessions (
+  token TEXT PRIMARY KEY,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token TEXT PRIMARY KEY,
+  expires_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ticket_replies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,

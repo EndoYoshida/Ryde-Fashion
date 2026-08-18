@@ -2,9 +2,21 @@ import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import nodemailer from "nodemailer";
 import { db } from "./db/index.js";
+import {
+  verificationEmailHtml,
+  deletionEmailHtml,
+  orderReceiptHtml,
+  ticketReplyHtml,
+  newTicketNotificationHtml,
+} from "./emailTemplates.js";
 
 const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_APP_PASSWORD = process.env.EMAIL_APP_PASSWORD;
+// Gmail displays App Passwords in 4-character groups for readability (e.g.
+// "abcd efgh ijkl mnop"), but the real password is 16 characters with no
+// spaces. If someone copies it straight from the Google Account page, the
+// spaces come along for the ride and Gmail rejects the login. Stripping all
+// whitespace here means it works whether it's pasted with or without them.
+const EMAIL_APP_PASSWORD = process.env.EMAIL_APP_PASSWORD?.replace(/\s+/g, "");
 const IMAP_HOST = process.env.IMAP_HOST || "imap.gmail.com";
 const IMAP_PORT = Number(process.env.IMAP_PORT || 993);
 
@@ -27,11 +39,11 @@ function getTransporter() {
 // Generic sender — everything else in this file builds on this.
 // Returns { sent, reason } rather than throwing, so callers can decide
 // how to degrade gracefully when email isn't configured or fails.
-async function sendEmail({ to, subject, text }) {
+async function sendEmail({ to, subject, text, html }) {
   const t = getTransporter();
   if (!t) return { sent: false, reason: "Email isn't configured yet (see server/.env)." };
   try {
-    await t.sendMail({ from: `"Ryde Fashion" <${EMAIL_USER}>`, to, subject, text });
+    await t.sendMail({ from: `"Ryde Fashion" <${EMAIL_USER}>`, to, subject, text, html });
     return { sent: true };
   } catch (err) {
     console.error("Failed to send email:", err.message);
@@ -47,6 +59,7 @@ export async function sendReplyEmail(to, subject, body) {
     to,
     subject: subject.startsWith("Re:") ? subject : `Re: ${subject}`,
     text: body,
+    html: ticketReplyHtml({ subject, body }),
   });
 }
 
@@ -56,6 +69,7 @@ export async function sendVerificationEmail(to, code) {
     to,
     subject: "Verify your email — Ryde Fashion",
     text: `Welcome to Ryde Fashion!\n\nYour verification code is: ${code}\n\nEnter this code in your account page to verify your email. This code expires in 30 minutes — you can request a new one anytime if it runs out.\n\nIf you didn't create this account, you can ignore this email.`,
+    html: verificationEmailHtml(code),
   });
 }
 
@@ -65,6 +79,7 @@ export async function sendDeletionConfirmationEmail(to, code) {
     to,
     subject: "Confirm account deletion — Ryde Fashion",
     text: `We received a request to permanently delete your Ryde Fashion account.\n\nYour confirmation code is: ${code}\n\nEnter this code to confirm. This code expires in 30 minutes.\n\nIf you didn't request this, ignore this email and your account will remain exactly as it is — nothing happens without the code.`,
+    html: deletionEmailHtml(code),
   });
 }
 
@@ -89,16 +104,34 @@ export async function sendOrderReceiptEmail(order) {
     "— Ryde Fashion & Authentic Bags and Apparel",
   ].join("\n");
 
-  return sendEmail({ to: order.email, subject: `Your Ryde Fashion order #${order.id}`, text });
+  return sendEmail({ to: order.email, subject: `Your Ryde Fashion order #${order.id}`, text, html: orderReceiptHtml(order) });
+}
+
+// Notifies the store's own inbox when a customer submits the "Contact us"
+// form, so a new ticket doesn't sit unseen until someone happens to open
+// the admin dashboard. Sent to EMAIL_USER itself, not to the customer.
+export async function sendNewTicketNotificationEmail(ticket) {
+  if (!EMAIL_USER) return { sent: false, reason: "EMAIL_USER isn't configured yet." };
+  const text = `New support message from ${ticket.customer} (${ticket.email})\n\nSubject: ${ticket.subject}\n\n${ticket.message}\n\nReply from the admin dashboard's Support Tickets tab.`;
+  return sendEmail({
+    to: EMAIL_USER,
+    subject: `New support message: ${ticket.subject}`,
+    text,
+    html: newTicketNotificationHtml(ticket),
+  });
 }
 
 function makeTicketId() {
   return `TCK-${Date.now().toString(36).toUpperCase().slice(-6)}${Math.floor(Math.random() * 100)}`;
 }
 
-// Checks the inbox for new mail and turns each new message into a
-// support ticket (skips anything already imported, tracked by the
-// email's Message-ID header so re-polling never creates duplicates).
+// Checks the inbox for new mail and turns each new message into a support
+// ticket — but only when the sender is a registered customer. This inbox is
+// the same address used for personal/business mail, so without this filter
+// every unrelated email (newsletters, receipts, personal messages, etc.)
+// was turning into a "support ticket" in the admin dashboard. Anything from
+// an address that isn't a registered customer is just marked as read and
+// skipped; it's still marked seen so we don't re-scan it every minute.
 export async function pollInbox() {
   if (!isEmailConfigured()) return;
 
@@ -121,10 +154,12 @@ export async function pollInbox() {
 
         const parsed = await simpleParser(message.source);
         const messageId = parsed.messageId || `${uid}-${Date.now()}`;
+        const fromEmail = (parsed.from?.value?.[0]?.address || "").toLowerCase();
 
         const existing = db.prepare("SELECT id FROM tickets WHERE message_id = ?").get(messageId);
-        if (!existing) {
-          const fromEmail = parsed.from?.value?.[0]?.address || "unknown@unknown.com";
+        const isRegisteredCustomer = fromEmail && db.prepare("SELECT id FROM customers WHERE email = ?").get(fromEmail);
+
+        if (!existing && isRegisteredCustomer) {
           const fromName = parsed.from?.value?.[0]?.name || fromEmail.split("@")[0];
           const subject = parsed.subject || "(no subject)";
           const body = (parsed.text || "").trim().slice(0, 5000) || "(empty message)";
@@ -135,6 +170,8 @@ export async function pollInbox() {
           `).run(makeTicketId(), fromName, fromEmail, subject, body, messageId);
 
           console.log(`New support ticket created from email: ${subject} (${fromEmail})`);
+        } else if (!existing) {
+          console.log(`Skipped non-customer email in support inbox: ${fromEmail || "(unknown sender)"}`);
         }
 
         await client.messageFlagsAdd(uid, ["\\Seen"]);

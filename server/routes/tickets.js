@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { requireAdmin } from "../auth.js";
-import { sendReplyEmail } from "../email.js";
+import { sendReplyEmail, sendNewTicketNotificationEmail } from "../email.js";
 import { publicWriteLimiter } from "../rateLimit.js";
 
 const router = Router();
@@ -52,7 +52,16 @@ router.post("/", publicWriteLimiter, (req, res) => {
     VALUES (?, ?, ?, ?, ?, 'open', date('now'))
   `).run(id, customer.trim(), email.trim().toLowerCase(), subject.trim(), message.trim());
   const row = db.prepare("SELECT * FROM tickets WHERE id = ?").get(id);
-  res.status(201).json(rowToTicket(row));
+  const ticket = rowToTicket(row);
+
+  // Best-effort notification to the store's own inbox — a customer's
+  // ticket is already saved at this point regardless of whether this
+  // succeeds, so a failure here shouldn't fail their submission.
+  sendNewTicketNotificationEmail(ticket).catch((err) => {
+    console.error("Failed to send new-ticket notification:", err.message);
+  });
+
+  res.status(201).json(ticket);
 });
 
 // POST /api/tickets/:id/reply — sends a real email back to the customer

@@ -3,6 +3,9 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 
+import path from "path";
+import { fileURLToPath } from "url";
+
 import "./db/index.js"; // ensures the SQLite file exists + is seeded on first run
 import { UPLOADS_DIR } from "./upload.js";
 import { login, logout } from "./auth.js";
@@ -13,6 +16,8 @@ import productsRouter from "./routes/products.js";
 import ordersRouter from "./routes/orders.js";
 import customersRouter from "./routes/customers.js";
 import ticketsRouter from "./routes/tickets.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -33,6 +38,10 @@ app.use(helmet({
 app.use(cors({ origin: ALLOWED_ORIGIN }));
 app.use(express.json({ limit: "1mb" }));
 app.use("/uploads", express.static(UPLOADS_DIR));
+// Serves static assets referenced by outgoing emails (e.g. the logo) at an
+// absolute URL — email clients can't load relative paths, so templates in
+// emailTemplates.js build the full URL from APP_ORIGIN below.
+app.use("/public", express.static(path.join(__dirname, "public")));
 app.use("/api", generalLimiter);
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
