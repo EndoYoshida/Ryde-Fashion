@@ -17,9 +17,15 @@ const storage = multer.diskStorage({
   },
 });
 
+// An explicit allowlist rather than "starts with image/" — that broader
+// check would also accept image/svg+xml, and SVGs can embed <script>
+// tags. Since these files get served straight back to browsers at
+// /uploads/..., an uploaded SVG would be a stored XSS vector.
+const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
 function fileFilter(req, file, cb) {
-  if (!file.mimetype.startsWith("image/")) {
-    return cb(new Error("Only image files are allowed"));
+  if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+    return cb(new Error("Only JPG, PNG, WEBP, or GIF images are allowed"));
   }
   cb(null, true);
 }

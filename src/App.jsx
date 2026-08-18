@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
+import { signOut } from "firebase/auth";
 import "./styles.css";
 
+import { auth } from "./firebaseConfig";
 import Header from "./components/Header";
 import Hero from "./components/Hero";
 import About from "./components/About";
@@ -301,6 +303,7 @@ export default function App() {
     localStorage.removeItem("rydeCustomerToken");
     setCustomerTokenState(null);
     setCustomer(null);
+    signOut(auth).catch(() => {}); // clear Firebase's own local session too
     // Their wishlist is safely saved server-side — clear it from this
     // (now signed-out) browser so the next person on this device
     // doesn't see it.
@@ -398,8 +401,7 @@ export default function App() {
     <div className="ryde-app">
       {backendError && (
         <div className="backend-error-banner">
-          Can&rsquo;t reach the backend at <code>localhost:4000</code>. Run <code>npm run dev</code> inside the{" "}
-          <code>server</code> folder, then refresh this page.
+          Can&rsquo;t reach the backend at <code>{api.SERVER_ORIGIN}</code>. Make sure the server is running, then refresh this page.
         </div>
       )}
       {customer && !customer.emailVerified && view !== "account" && (

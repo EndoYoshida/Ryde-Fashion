@@ -9,6 +9,7 @@ import { fileURLToPath } from "url";
 import "./db/index.js"; // ensures the SQLite file exists + is seeded on first run
 import { UPLOADS_DIR } from "./upload.js";
 import { login, logout } from "./auth.js";
+import { isFirebaseConfigured } from "./firebaseAdmin.js";
 import { pollInbox, isEmailConfigured } from "./email.js";
 import { generalLimiter, authLimiter } from "./rateLimit.js";
 import authRouter from "./routes/auth.js";
@@ -23,6 +24,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+
+// Render (and most PaaS hosts) put your app behind a reverse proxy, so
+// every request's actual source IP arrives in the X-Forwarded-For header
+// rather than as the socket's own address. Without this, req.ip is just
+// the proxy's IP for every request — which would silently break the
+// per-IP rate limiting (rateLimit.js) and the admin login lockout
+// (auth.js), lumping every visitor into one shared bucket.
+app.set("trust proxy", 1);
 
 // Only the storefront's own origin may call this API. A malicious site
 // can't get a browser to make authenticated cross-origin requests here —
@@ -63,8 +72,8 @@ const POLL_INTERVAL_MS = 60 * 1000; // check for new support emails every minute
 
 app.listen(PORT, () => {
   console.log(`Ryde API running at http://localhost:${PORT}`);
-  if (!process.env.GOOGLE_CLIENT_ID) {
-    console.warn("Warning: GOOGLE_CLIENT_ID is not set in server/.env — Google sign-in will not work.");
+  if (!isFirebaseConfigured) {
+    console.warn("Warning: FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY are not set in server/.env — customer sign-in will not work.");
   }
   if (isEmailConfigured()) {
     console.log(`Checking ${process.env.EMAIL_USER} for new support emails every ${POLL_INTERVAL_MS / 1000}s.`);

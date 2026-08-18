@@ -30,7 +30,7 @@ npm install
 npm run dev
 ```
 
-Backend runs at `http://localhost:4000`.
+Backend runs at `const SERVER_ORIGIN = "https://gcdf9f43-4000.asse.devtunnels.ms";`.
 
 ### Frontend
 

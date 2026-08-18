@@ -1,11 +1,21 @@
 import crypto from "crypto";
 import { db } from "./db/index.js";
+import { hashPassword, verifyPassword } from "./customerAuth.js";
 
-// Hardcoded admin credentials for this prototype. In a real production
-// app these would be hashed + stored in the database (or a proper auth
-// provider), never committed as plain text — flagging that clearly here.
-const ADMIN_USERNAME = "RydeAdmin";
-const ADMIN_PASSWORD = "RydenSito1004_";
+// Admin credentials live in environment variables now, never in source —
+// see server/.env.example. ADMIN_PASSWORD_HASH is a salted hash (the same
+// scrypt format customerAuth.js uses), not a plaintext password: run
+// `node scripts/hash-admin-password.js "your password"` to generate one.
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
+
+if (!ADMIN_USERNAME || !ADMIN_PASSWORD_HASH) {
+  console.error(
+    "\n[FATAL] ADMIN_USERNAME and ADMIN_PASSWORD_HASH must be set in server/.env — " +
+    "the admin dashboard has no login credentials configured.\n" +
+    "Run: node scripts/hash-admin-password.js \"your password\"  to generate a hash.\n"
+  );
+}
 
 // Sessions are persisted in SQLite (not kept in memory) so an active admin
 // login survives server restarts — deploys, crashes, or `--watch` reloads
@@ -24,7 +34,25 @@ function getAttemptState(ip) {
   return attempts.get(ip) || { count: 0, lockedUntil: 0 };
 }
 
+// Constant-time string comparison so a mistyped username can't be
+// distinguished from a correct one by response timing.
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a || ""));
+  const bufB = Buffer.from(String(b || ""));
+  if (bufA.length !== bufB.length) {
+    // Still run a comparison of equal length so the timing doesn't leak
+    // the length mismatch either.
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 export function login(req, res) {
+  if (!ADMIN_USERNAME || !ADMIN_PASSWORD_HASH) {
+    return res.status(500).json({ error: "Admin login isn't configured on the server." });
+  }
+
   const ip = req.ip;
   const state = getAttemptState(ip);
 
@@ -34,7 +62,9 @@ export function login(req, res) {
   }
 
   const { username, password } = req.body || {};
-  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+  const ok = safeEqual(username, ADMIN_USERNAME) && verifyPassword(password || "", ADMIN_PASSWORD_HASH);
+
+  if (ok) {
     attempts.delete(ip);
     const token = crypto.randomBytes(24).toString("hex");
     db.prepare("INSERT INTO admin_sessions (token, expires_at) VALUES (?, ?)")
@@ -83,3 +113,7 @@ export function requireAdmin(req, res, next) {
     .run(Date.now() + SESSION_TTL_MS, token);
   next();
 }
+
+// Re-exported so scripts/hash-admin-password.js doesn't need to know
+// customerAuth.js's internals — it just needs "the hash function".
+export { hashPassword };

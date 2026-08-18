@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { db } from "./db/index.js";
 
 // --- Password hashing (Node's built-in crypto, no native deps needed) ---
+// Customers no longer have a locally-stored password (Firebase Auth owns
+// that now) — this is kept only for the admin account in server/auth.js.
 export function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.scryptSync(password, salt, 64).toString("hex");
@@ -76,6 +78,9 @@ export function publicCustomer(row) {
     province: row.province, zipCode: row.zip_code,
     joined: row.joined,
     emailVerified: !!row.email_verified,
+    // Deliberately NOT included: password_hash, firebase_uid,
+    // verification_code — nothing that could help an attacker or that
+    // the frontend has any legitimate use for.
   };
 }
 

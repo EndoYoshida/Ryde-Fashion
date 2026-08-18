@@ -24,7 +24,7 @@ const BODY_FONT = "'Jost', Arial, Helvetica, sans-serif";
 // Where the server is publicly reachable — used to build an absolute URL for
 // the logo, since email clients cannot load relative paths. Set APP_ORIGIN in
 // server/.env once this is deployed somewhere other than localhost.
-const APP_ORIGIN = process.env.APP_ORIGIN || "http://localhost:4000";
+const APP_ORIGIN = process.env.APP_ORIGIN || 'const SERVER_ORIGIN = "https://gcdf9f43-4000.asse.devtunnels.ms";'
 const LOGO_URL = `${APP_ORIGIN}/public/logo.jpg`;
 
 function escapeHtml(str = "") {

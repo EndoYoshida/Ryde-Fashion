@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { User, Mail, Phone, MapPin, Lock, LogOut, Package, Check, ShieldCheck, Headphones, AlertTriangle, Trash2 } from "lucide-react";
+import { sendEmailVerification, sendPasswordResetEmail } from "firebase/auth";
 import { peso } from "../data/products";
-import PasswordField from "./ui/PasswordField";
-import { passwordMeetsRules, PASSWORD_RULE_TEXT } from "../passwordUtils";
+import { auth } from "../firebaseConfig";
 import * as api from "../api";
 
 const ORDER_STATUS_CLASS = {
@@ -60,7 +60,7 @@ export default function AccountDashboard({ customer, updateProfile, onCustomerUp
           {tab === "verify" && <VerifyTab customer={customer} onCustomerUpdated={onCustomerUpdated} />}
           {tab === "orders" && <OrdersTab />}
           {tab === "support" && <SupportTab />}
-          {tab === "password" && <PasswordTab />}
+          {tab === "password" && <PasswordTab customer={customer} />}
           {tab === "delete" && <DeleteAccountTab customer={customer} onLogout={onLogout} />}
         </div>
       </div>
@@ -183,21 +183,27 @@ function ProfileTab({ customer, updateProfile, onGoToVerify }) {
 }
 
 function VerifyTab({ customer, onCustomerUpdated }) {
-  const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [resent, setResent] = useState(false);
 
-  const handleVerify = async (e) => {
-    e.preventDefault();
-    if (!code.trim()) return;
+  // Firebase owns the actual verification link/click now. "I've verified"
+  // force-refreshes the Firebase ID token (which picks up the latest
+  // emailVerified claim) and re-syncs it to our backend, since our own
+  // customer row only updates when it sees a fresh token.
+  const handleCheckVerified = async () => {
     setBusy(true);
     setError("");
     try {
-      const result = await api.verifyEmail(code.trim());
+      await auth.currentUser.reload();
+      const idToken = await auth.currentUser.getIdToken(true);
+      const result = await api.firebaseLogin(idToken);
       onCustomerUpdated(result.customer);
+      if (!result.customer.emailVerified) {
+        setError("Still not verified yet — check your inbox (and spam folder) for the link.");
+      }
     } catch (err) {
-      setError(err.message || "Couldn't verify that code.");
+      setError(err.message || "Couldn't check verification status.");
     } finally {
       setBusy(false);
     }
@@ -207,11 +213,13 @@ function VerifyTab({ customer, onCustomerUpdated }) {
     setBusy(true);
     setError("");
     try {
-      await api.resendVerification();
+      await sendEmailVerification(auth.currentUser);
       setResent(true);
       setTimeout(() => setResent(false), 4000);
     } catch (err) {
-      setError(err.message || "Couldn't resend the code.");
+      setError(err.code === "auth/too-many-requests"
+        ? "Please wait a bit before requesting another email."
+        : (err.message || "Couldn't resend the verification email."));
     } finally {
       setBusy(false);
     }
@@ -230,52 +238,39 @@ function VerifyTab({ customer, onCustomerUpdated }) {
     <div className="account-panel">
       <h4>Verify your email</h4>
       <p className="admin-field-hint" style={{ marginBottom: 16 }}>
-        We sent a 6-digit code to <strong>{customer.email}</strong> when you signed up. Enter it below.
-        If you can&rsquo;t find it, check spam, or request a new one.
+        We sent a verification link to <strong>{customer.email}</strong>. Click it, then come back here
+        and tap &ldquo;I&rsquo;ve verified.&rdquo; If you can&rsquo;t find it, check spam, or request a new one.
       </p>
-      <form onSubmit={handleVerify} className="admin-form" style={{ maxWidth: 260 }}>
-        <input
-          value={code}
-          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-          placeholder="000000"
-          inputMode="numeric"
-          style={{ fontSize: 20, letterSpacing: 6, textAlign: "center" }}
-        />
-        {error && <p className="admin-form-error">{error}</p>}
-        {resent && <p className="review-thanks"><Check size={14} /> New code sent</p>}
-        <div className="admin-form-actions" style={{ justifyContent: "flex-start" }}>
-          <button type="submit" className="btn-gold" disabled={busy || code.length !== 6}>Verify</button>
-          <button type="button" className="btn-outline" onClick={handleResend} disabled={busy}>Resend code</button>
-        </div>
-      </form>
+      {error && <p className="admin-form-error">{error}</p>}
+      {resent && <p className="review-thanks"><Check size={14} /> Verification email sent</p>}
+      <div className="admin-form-actions" style={{ justifyContent: "flex-start" }}>
+        <button type="button" className="btn-gold" onClick={handleCheckVerified} disabled={busy}>
+          {busy ? "Checking..." : "I've verified"}
+        </button>
+        <button type="button" className="btn-outline" onClick={handleResend} disabled={busy}>Resend email</button>
+      </div>
     </div>
   );
 }
 
-function PasswordTab() {
-  const [form, setForm] = useState({ currentPassword: "", newPassword: "", confirm: "" });
+function PasswordTab({ customer }) {
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
+  const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError("");
-    if (!passwordMeetsRules(form.newPassword)) {
-      return setError(`New password doesn't meet the requirements: ${PASSWORD_RULE_TEXT}`);
-    }
-    if (form.newPassword !== form.confirm) return setError("New password and confirmation don't match.");
-
+  // Passwords now live entirely in Firebase — the cleanest, most secure
+  // way to change one without re-collecting the current password here is
+  // to send the standard Firebase reset-password email.
+  const handleSendReset = async () => {
     setBusy(true);
+    setError("");
     try {
-      await api.changeMyPassword(form.currentPassword, form.newPassword);
-      setSuccess(true);
-      setForm({ currentPassword: "", newPassword: "", confirm: "" });
-      setTimeout(() => setSuccess(false), 3000);
+      await sendPasswordResetEmail(auth, customer.email);
+      setSent(true);
     } catch (err) {
-      setError(err.message || "Couldn't change your password.");
+      setError(err.code === "auth/too-many-requests"
+        ? "Please wait a bit before requesting another email."
+        : (err.message || "Couldn't send the reset email."));
     } finally {
       setBusy(false);
     }
@@ -284,24 +279,16 @@ function PasswordTab() {
   return (
     <div className="account-panel">
       <h4>Change password</h4>
-      <form onSubmit={handleSubmit} className="admin-form">
-        <label>Current password
-          <PasswordField value={form.currentPassword} onChange={set("currentPassword")} autoComplete="current-password" />
-        </label>
-        <label>New password
-          <PasswordField value={form.newPassword} onChange={set("newPassword")} showStrength autoComplete="new-password" />
-          <span className="admin-field-hint">{PASSWORD_RULE_TEXT}</span>
-        </label>
-        <label>Confirm new password
-          <PasswordField value={form.confirm} onChange={set("confirm")} autoComplete="new-password" />
-        </label>
-
-        {error && <p className="admin-form-error">{error}</p>}
-        <div className="admin-form-actions" style={{ justifyContent: "flex-start" }}>
-          <button type="submit" className="btn-gold" disabled={busy}>{busy ? "Updating..." : "Update Password"}</button>
-          {success && <span className="review-thanks"><Check size={14} /> Password updated</span>}
-        </div>
-      </form>
+      <p className="admin-field-hint" style={{ marginBottom: 16 }}>
+        For your security, password changes go through a reset link emailed to <strong>{customer.email}</strong>{" "}
+        rather than being set directly here.{" "}
+        {customer.emailVerified === false && "(Note: if you signed up with Google, you don't have a password to reset.)"}
+      </p>
+      {error && <p className="admin-form-error">{error}</p>}
+      {sent && <p className="review-thanks"><Check size={14} /> Reset email sent — check your inbox</p>}
+      <button type="button" className="btn-gold" onClick={handleSendReset} disabled={busy || sent}>
+        {busy ? "Sending..." : sent ? "Email sent" : "Send password reset email"}
+      </button>
     </div>
   );
 }
@@ -349,15 +336,15 @@ function OrdersTab() {
 
 function DeleteAccountTab({ customer, onLogout }) {
   const [step, setStep] = useState("confirm"); // confirm -> code (if verified) -> done
-  const [password, setPassword] = useState("");
+  const [confirmText, setConfirmText] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const handleRequestDeletion = async (e) => {
     e.preventDefault();
-    if (!password) {
-      setError("Enter your password to continue.");
+    if (confirmText.trim().toUpperCase() !== "DELETE") {
+      setError('Type "DELETE" to confirm.');
       return;
     }
     setBusy(true);
@@ -380,7 +367,7 @@ function DeleteAccountTab({ customer, onLogout }) {
     setBusy(true);
     setError("");
     try {
-      await api.deleteAccount(password, withCode);
+      await api.deleteAccount(withCode);
       onLogout();
     } catch (err) {
       setError(err.message || "Couldn't delete your account.");
@@ -405,8 +392,8 @@ function DeleteAccountTab({ customer, onLogout }) {
 
       {step === "confirm" && (
         <form onSubmit={handleRequestDeletion} className="admin-form" style={{ maxWidth: 300 }}>
-          <label>Confirm your password
-            <PasswordField value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+          <label>Type DELETE to confirm
+            <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="DELETE" />
           </label>
           {error && <p className="admin-form-error">{error}</p>}
           <button type="submit" className="btn-delete" disabled={busy}>

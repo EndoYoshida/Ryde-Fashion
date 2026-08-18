@@ -1,4 +1,7 @@
-export const SERVER_ORIGIN = "http://localhost:4000";
+// In production, set VITE_API_URL (e.g. https://api.rydefashion.com) as an
+// environment variable on your hosting provider. Locally it falls back to
+// your dev server on port 4000.
+export const SERVER_ORIGIN = import.meta.env.VITE_API_URL || "http://localhost:4000";
 const API_BASE = `${SERVER_ORIGIN}/api`;
 
 // Two completely separate auth contexts — an admin session token and a
@@ -42,28 +45,22 @@ export const loginAdmin = (username, password) =>
 export const logoutAdmin = () => request("/admin/logout", { method: "POST" }, "admin").catch(() => {});
 
 /* ------------------------------ Customer auth ----------------------------- */
-export const signupCustomer = (name, username, email, password, phone) =>
-  request("/auth/signup", { method: "POST", body: JSON.stringify({ name, username, email, password, phone }) });
-export const loginCustomer = (identifier, password) =>
-  request("/auth/login", { method: "POST", body: JSON.stringify({ identifier, password }) });
-export const googleLogin = (credential) =>
-  request("/auth/google", { method: "POST", body: JSON.stringify({ credential }) });
+// Identity (password/Google) is handled by Firebase on the frontend; this
+// call exchanges a verified Firebase ID token for our own session token,
+// which every other customer-scoped call below uses. `username`/`phone`
+// are only used the first time a given Firebase account signs in.
+export const firebaseLogin = (idToken, username, phone) =>
+  request("/auth/firebase", { method: "POST", body: JSON.stringify({ idToken, username, phone }) });
 export const logoutCustomer = () => request("/auth/logout", { method: "POST" }, "customer").catch(() => {});
 export const getMe = () => request("/auth/me", {}, "customer");
 export const updateMe = (changes) =>
   request("/auth/me", { method: "PATCH", body: JSON.stringify(changes) }, "customer");
-export const changeMyPassword = (currentPassword, newPassword) =>
-  request("/auth/me/password", { method: "PATCH", body: JSON.stringify({ currentPassword, newPassword }) }, "customer");
 export const getMyOrders = () => request("/auth/me/orders", {}, "customer");
 export const getMyTickets = () => request("/auth/me/tickets", {}, "customer");
-export const verifyEmail = (code) =>
-  request("/auth/verify-email", { method: "POST", body: JSON.stringify({ code }) }, "customer");
-export const resendVerification = () =>
-  request("/auth/resend-verification", { method: "POST" }, "customer");
 export const requestAccountDeletion = () =>
   request("/auth/delete-account/request", { method: "POST" }, "customer");
-export const deleteAccount = (password, code) =>
-  request("/auth/me", { method: "DELETE", body: JSON.stringify({ password, code }) }, "customer");
+export const deleteAccount = (code) =>
+  request("/auth/me", { method: "DELETE", body: JSON.stringify({ code }) }, "customer");
 
 /* -------------------------------- Products -------------------------------- */
 export const getProducts = () => request("/products");

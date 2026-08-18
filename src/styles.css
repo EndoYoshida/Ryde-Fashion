@@ -45,7 +45,7 @@
 .btn-outline:hover { background:var(--cream); }
 .btn-ivory { background:var(--ivory); color:var(--ink); }
 .btn-gold.small, .btn-outline.small { padding:8px 16px; font-size:11px; }
-.btn-gold.full { width:100%; justify-content:center; margin-top:14px; }
+.btn-gold.full, .btn-outline.full { width:100%; justify-content:center; margin-top:14px; }
 .center-btn { text-align:center; margin-top:36px; }
 
 /* hero */

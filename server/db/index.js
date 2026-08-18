@@ -43,6 +43,12 @@ addColumnIfMissing("customers", "province", "TEXT");
 addColumnIfMissing("customers", "zip_code", "TEXT");
 addColumnIfMissing("customers", "phone_country_code", "TEXT");
 addColumnIfMissing("orders", "phone", "TEXT");
+// Firebase Authentication migration: each customer is now identified by
+// the UID Firebase issues them, instead of a locally-stored password
+// hash. password_hash stays in the table (existing/legacy rows may still
+// have one) but is no longer written for new accounts.
+addColumnIfMissing("customers", "firebase_uid", "TEXT");
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_firebase_uid ON customers(firebase_uid) WHERE firebase_uid IS NOT NULL");
 
 if (isNewDb) {
   console.log("New database created at", DB_PATH, "— starting empty (no demo data).");

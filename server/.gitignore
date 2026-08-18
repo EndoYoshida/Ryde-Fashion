@@ -4,3 +4,10 @@ node_modules/
 *.sqlite-wal
 uploads/
 .env
+.env.local
+.DS_Store
+.vscode/
+.idea/
+*.log
+*firebase-adminsdk*.json
+serviceAccountKey.json
