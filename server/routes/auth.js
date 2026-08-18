@@ -175,9 +175,40 @@ router.get("/me", requireCustomer, (req, res) => {
 
 // PATCH /api/auth/me  (update profile info)
 router.patch("/me", requireCustomer, (req, res) => {
-  const { name, phone, address } = req.body || {};
-  db.prepare("UPDATE customers SET name = COALESCE(?, name), phone = ?, address = ? WHERE id = ?")
-    .run(name?.trim() || null, phone?.trim() || null, address?.trim() || null, req.customer.id);
+  const { name, phone, phoneCountryCode, addressLine, barangay, city, province, zipCode } = req.body || {};
+
+  // Phone: digits only, capped at 11 (matches the checkout form's own cap).
+  // Country code: digits only after a leading "+", capped at 4 digits.
+  const cleanPhone = phone != null ? String(phone).replace(/\D/g, "").slice(0, 10) || null : null;
+  const cleanCountryCode = phoneCountryCode != null
+    ? (String(phoneCountryCode).replace(/\D/g, "").slice(0, 4) ? `+${String(phoneCountryCode).replace(/\D/g, "").slice(0, 4)}` : null)
+    : null;
+
+  const cleanAddressLine = addressLine?.trim() || null;
+  const cleanBarangay = barangay?.trim() || null;
+  const cleanCity = city?.trim() || null;
+  const cleanProvince = province?.trim() || null;
+  const cleanZip = zipCode?.trim() || null;
+
+  // Legacy combined `address` column, kept in sync so anything that just
+  // wants a single display line (e.g. a future admin view) still works.
+  const combinedAddress = [cleanAddressLine, cleanBarangay, cleanCity, cleanProvince, cleanZip]
+    .filter(Boolean).join(", ") || null;
+
+  db.prepare(`
+    UPDATE customers
+    SET name = COALESCE(?, name),
+        phone = ?, phone_country_code = ?,
+        address_line = ?, barangay = ?, city = ?, province = ?, zip_code = ?,
+        address = ?
+    WHERE id = ?
+  `).run(
+    name?.trim() || null,
+    cleanPhone, cleanCountryCode,
+    cleanAddressLine, cleanBarangay, cleanCity, cleanProvince, cleanZip,
+    combinedAddress,
+    req.customer.id,
+  );
   const updated = db.prepare("SELECT * FROM customers WHERE id = ?").get(req.customer.id);
   res.json(publicCustomer(updated));
 });

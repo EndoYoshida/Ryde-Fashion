@@ -65,7 +65,16 @@ export function publicCustomer(row) {
   if (!row) return null;
   return {
     id: row.id, name: row.name, username: row.username, email: row.email,
-    phone: row.phone, address: row.address, joined: row.joined,
+    // `phone` is digits-only (max 11); `phoneCountryCode` is separate so a
+    // shopper's local number never has to embed or strip a "+63" itself.
+    phone: row.phone, phoneCountryCode: row.phone_country_code || "+63",
+    // `address` stays as a combined string (kept in sync on every save) for
+    // anywhere that just wants one display line. The split-out parts below
+    // are what the profile form and checkout form actually read/write.
+    address: row.address,
+    addressLine: row.address_line, barangay: row.barangay, city: row.city,
+    province: row.province, zipCode: row.zip_code,
+    joined: row.joined,
     emailVerified: !!row.email_verified,
   };
 }

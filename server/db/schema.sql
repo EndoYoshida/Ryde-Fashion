@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS orders (
   customer_id INTEGER REFERENCES customers(id),
   customer_name TEXT NOT NULL,
   email TEXT NOT NULL,
+  phone TEXT,
   address TEXT,
   payment_method TEXT,
   proof_image TEXT,

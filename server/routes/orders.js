@@ -15,6 +15,7 @@ function getOrderWithItems(id) {
     id: order.id,
     customer: order.customer_name,
     email: order.email,
+    phone: order.phone,
     address: order.address,
     paymentMethod: order.payment_method,
     proofImage: order.proof_image ? `/uploads/${order.proof_image}` : null,
@@ -40,7 +41,7 @@ router.get("/", requireAdmin, (req, res) => {
 // (fake low prices, absurd quantities, buying something sold out)
 // simply can't succeed, regardless of what the request body claims.
 router.post("/", publicWriteLimiter, async (req, res) => {
-  const { id, customer, email, address, paymentMethod, items } = req.body;
+  const { id, customer, email, phone, address, paymentMethod, items } = req.body;
 
   if (!id || typeof id !== "string" || id.length > 64) {
     return res.status(400).json({ error: "Invalid order id" });
@@ -54,6 +55,11 @@ router.post("/", publicWriteLimiter, async (req, res) => {
   if (address && address.length > 500) {
     return res.status(400).json({ error: "Address is too long" });
   }
+  // Country code + local number, e.g. "+63 9171234567" — the local part
+  // is capped at 10 digits by the checkout form itself (no leading 0,
+  // since the country code replaces it), so 20 chars comfortably covers
+  // "+" + code + space + 10 digits with room to spare.
+  const cleanPhone = phone && String(phone).trim().length <= 20 ? String(phone).trim() : null;
   if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
     return res.status(400).json({ error: "Order must include 1-50 items" });
   }
@@ -93,9 +99,9 @@ router.post("/", publicWriteLimiter, async (req, res) => {
   // none of it is written at all.
   const placeOrder = db.transaction(() => {
     db.prepare(`
-      INSERT INTO orders (id, customer_name, email, address, payment_method, status, payment_status, total, date)
-      VALUES (?, ?, ?, ?, ?, 'pending', 'pending', ?, date('now'))
-    `).run(id, customer.trim(), email.trim().toLowerCase(), address?.trim() || null, paymentMethod ?? null, total);
+      INSERT INTO orders (id, customer_name, email, phone, address, payment_method, status, payment_status, total, date)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, date('now'))
+    `).run(id, customer.trim(), email.trim().toLowerCase(), cleanPhone, address?.trim() || null, paymentMethod ?? null, total);
 
     const insertItem = db.prepare("INSERT INTO order_items (order_id, product_id, name, qty, price) VALUES (?, ?, ?, ?, ?)");
     const updateStock = db.prepare("UPDATE products SET stock = ?, status = ? WHERE id = ?");
