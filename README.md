@@ -45,19 +45,6 @@ npm run dev
 Open the URL it prints (usually `http://localhost:5173`). If the backend
 isn't running, you'll see a small banner at the top of the page.
 
-## Admin dashboard — separate from the shop, no link anywhere in the UI
-
-There is intentionally **no "Admin" button anywhere** on the storefront —
-not in the footer, not in the header, nowhere. The only way in is typing
-the URL directly:
-
-```
-http://localhost:5173/admin
-```
-
-**Login:**
-- Username: `RydeAdmin`
-- Password: `RydenSito1004_`
 
 **Leaving logs you out — every time, on purpose.** The sidebar's
 "Log out & return to store" is the only way back to the shop from inside
