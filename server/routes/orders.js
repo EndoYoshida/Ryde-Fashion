@@ -2,6 +2,8 @@ import { Router } from "express";
 import { db } from "../db/index.js";
 import { requireAdmin } from "../auth.js";
 import { upload } from "../upload.js";
+import { sendOrderReceiptEmail } from "../email.js";
+import { publicWriteLimiter } from "../rateLimit.js";
 
 const router = Router();
 
@@ -31,30 +33,94 @@ router.get("/", requireAdmin, (req, res) => {
 });
 
 // POST /api/orders  (used by checkout)
-router.post("/", (req, res) => {
+//
+// Security note: nothing about price or availability is ever trusted
+// from the client here. Every item is re-priced and re-validated
+// against the actual product row in the database — a tampered request
+// (fake low prices, absurd quantities, buying something sold out)
+// simply can't succeed, regardless of what the request body claims.
+router.post("/", publicWriteLimiter, async (req, res) => {
   const { id, customer, email, address, paymentMethod, items } = req.body;
-  if (!id || !customer || !email || !Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: "id, customer, email, and at least one item are required" });
+
+  if (!id || typeof id !== "string" || id.length > 64) {
+    return res.status(400).json({ error: "Invalid order id" });
   }
-  // Reject an id that already exists rather than silently overwriting
-  // someone else's order — ids are client-generated, so collisions
-  // (accidental or crafted) must not let one order clobber another.
+  if (!customer?.trim() || customer.length > 200) {
+    return res.status(400).json({ error: "A valid customer name is required" });
+  }
+  if (!email?.trim() || !email.includes("@") || email.length > 200) {
+    return res.status(400).json({ error: "A valid email is required" });
+  }
+  if (address && address.length > 500) {
+    return res.status(400).json({ error: "Address is too long" });
+  }
+  if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
+    return res.status(400).json({ error: "Order must include 1-50 items" });
+  }
+
   const existing = db.prepare("SELECT id FROM orders WHERE id = ?").get(id);
   if (existing) {
     return res.status(409).json({ error: "An order with this ID already exists" });
   }
 
-  const total = items.reduce((sum, it) => sum + it.price * it.qty, 0);
+  // Re-derive every item from the database — id and qty are the only
+  // things taken from the request; name/price/availability all come
+  // from the product row itself.
+  const getProduct = db.prepare("SELECT * FROM products WHERE id = ?");
+  const resolvedItems = [];
+  for (const raw of items) {
+    const qty = Number(raw?.qty);
+    if (!Number.isInteger(qty) || qty < 1 || qty > 999) {
+      return res.status(400).json({ error: "Each item needs a valid quantity (1-999)" });
+    }
+    const product = raw?.id ? getProduct.get(raw.id) : null;
+    if (!product) {
+      return res.status(400).json({ error: "One of the items in your cart no longer exists. Please refresh and try again." });
+    }
+    if (product.status !== "available") {
+      return res.status(409).json({ error: `"${product.name}" is no longer available.` });
+    }
+    if (product.stock < qty) {
+      return res.status(409).json({ error: `Only ${product.stock} of "${product.name}" left in stock.` });
+    }
+    resolvedItems.push({ product, qty });
+  }
 
-  db.prepare(`
-    INSERT INTO orders (id, customer_name, email, address, payment_method, status, payment_status, total, date)
-    VALUES (?, ?, ?, ?, ?, 'pending', 'pending', ?, date('now'))
-  `).run(id, customer, email, address ?? null, paymentMethod ?? null, total);
+  const total = resolvedItems.reduce((sum, { product, qty }) => sum + product.price * qty, 0);
 
-  const insertItem = db.prepare("INSERT INTO order_items (order_id, name, qty, price) VALUES (?, ?, ?, ?)");
-  for (const it of items) insertItem.run(id, it.name, it.qty, it.price);
+  // Everything below happens atomically — either the whole order, all
+  // its line items, and every stock decrement succeed together, or
+  // none of it is written at all.
+  const placeOrder = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO orders (id, customer_name, email, address, payment_method, status, payment_status, total, date)
+      VALUES (?, ?, ?, ?, ?, 'pending', 'pending', ?, date('now'))
+    `).run(id, customer.trim(), email.trim().toLowerCase(), address?.trim() || null, paymentMethod ?? null, total);
 
-  res.status(201).json(getOrderWithItems(id));
+    const insertItem = db.prepare("INSERT INTO order_items (order_id, product_id, name, qty, price) VALUES (?, ?, ?, ?, ?)");
+    const updateStock = db.prepare("UPDATE products SET stock = ?, status = ? WHERE id = ?");
+
+    for (const { product, qty } of resolvedItems) {
+      // Use the product's real name/price at time of purchase, never
+      // whatever the client sent.
+      insertItem.run(id, product.id, product.name, qty, product.price);
+
+      const newStock = Math.max(0, product.stock - qty);
+      const newStatus = newStock === 0 ? "sold-out" : product.status;
+      updateStock.run(newStock, newStatus, product.id);
+    }
+  });
+  placeOrder();
+
+  const order = getOrderWithItems(id);
+
+  // Send a receipt email — this never blocks or fails the order itself.
+  const receipt = await sendOrderReceiptEmail(order);
+  if (!receipt.sent) {
+    console.warn(`Order ${id} created, but receipt email wasn't sent: ${receipt.reason}`);
+  }
+
+  res.status(201).json(order);
 });
 
 // POST /api/orders/:id/proof  (upload payment proof — public, used by

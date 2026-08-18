@@ -49,7 +49,7 @@ export default function Footer({ goShop, setView, customer, onAccountOpen }) {
           <h5>Support</h5>
           <button onClick={() => alert("Our FAQ page is coming soon! In the meantime, reach out via Contact us and we'll get back to you.")}>FAQs</button>
           <button onClick={handleTrackOrder}>Track order</button>
-          <button onClick={() => { window.location.href = "mailto:rydecompany.ph@gmail.com?subject=Inquiry"; }}>Contact us</button>
+          <button onClick={() => setView("support")}>Contact us</button>
         </div>
         <div>
           <h5>Newsletter</h5>
@@ -62,7 +62,7 @@ export default function Footer({ goShop, setView, customer, onAccountOpen }) {
         </div>
       </div>
       <div className="footer-bottom">
-        &copy; 2026 Ryde Fashion &amp; Authentic Bags and Apparel. All rights reserved. &mdash; Prototype for design review only.
+        &copy; 2026 Ryde Fashion &amp; Authentic Bags and Apparel. All rights reserved.
       </div>
     </footer>
   );

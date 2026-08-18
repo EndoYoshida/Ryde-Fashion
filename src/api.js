@@ -55,6 +55,15 @@ export const updateMe = (changes) =>
 export const changeMyPassword = (currentPassword, newPassword) =>
   request("/auth/me/password", { method: "PATCH", body: JSON.stringify({ currentPassword, newPassword }) }, "customer");
 export const getMyOrders = () => request("/auth/me/orders", {}, "customer");
+export const getMyTickets = () => request("/auth/me/tickets", {}, "customer");
+export const verifyEmail = (code) =>
+  request("/auth/verify-email", { method: "POST", body: JSON.stringify({ code }) }, "customer");
+export const resendVerification = () =>
+  request("/auth/resend-verification", { method: "POST" }, "customer");
+export const requestAccountDeletion = () =>
+  request("/auth/delete-account/request", { method: "POST" }, "customer");
+export const deleteAccount = (password, code) =>
+  request("/auth/me", { method: "DELETE", body: JSON.stringify({ password, code }) }, "customer");
 
 /* -------------------------------- Products -------------------------------- */
 export const getProducts = () => request("/products");
@@ -111,6 +120,7 @@ export const toggleCustomerStatusApi = (id, status) =>
 
 /* --------------------------------- Tickets -------------------------------- */
 export const getTickets = () => request("/tickets", {}, "admin");
+export const createTicket = (ticket) => request("/tickets", { method: "POST", body: JSON.stringify(ticket) });
 export const resolveTicketApi = (id) =>
   request(`/tickets/${id}/resolve`, { method: "PATCH" }, "admin");
 export const replyToTicketApi = (id, message) =>

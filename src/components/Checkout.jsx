@@ -4,7 +4,8 @@ import { peso } from "../data/products";
 import * as api from "../api";
 
 const PAYMENT_LABELS = {
-  bank: "Bank Transfer",
+  bdo: "Bank Transfer (BDO)",
+  unionbank: "Bank Transfer (UnionBank)",
   gcash: "GCash",
   cod: "Cash on Delivery",
 };
@@ -17,10 +18,16 @@ const PAYMENTS = [
     detail: "After sending, take a screenshot of the confirmation and upload it below so we can verify your payment.",
   },
   {
-    id: "bank",
-    label: "Bank Transfer",
+    id: "bdo",
+    label: "BDO",
     note: "BDO — 0012 3456 7890 (Ryde Fashion Co.)",
-    detail: "After transferring, upload a screenshot or photo of your bank receipt below so we can verify your payment.",
+    detail: "After transferring, upload a screenshot or photo of your BDO receipt below so we can verify your payment.",
+  },
+  {
+    id: "unionbank",
+    label: "UnionBank",
+    note: "UnionBank — 1098 7654 3210 (Ryde Fashion Co.)",
+    detail: "After transferring, upload a screenshot or photo of your UnionBank receipt below so we can verify your payment.",
   },
   {
     id: "cod",
@@ -93,7 +100,7 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
         email: form.email,
         address: fullAddress,
         paymentMethod: PAYMENT_LABELS[payment],
-        items: cart.map((c) => ({ name: c.name, qty: c.qty, price: c.price })),
+        items: cart.map((c) => ({ id: c.id, name: c.name, qty: c.qty, price: c.price })),
       });
 
       let finalOrder = order;

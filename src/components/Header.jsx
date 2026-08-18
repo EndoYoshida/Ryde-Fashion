@@ -8,7 +8,7 @@ export default function Header({ view, setView, goShop, cartCount, wishCount, on
     { id: "home", label: "Home" },
     { id: "browse", label: "Shop" },
     { id: "about", label: "About" },
-    { id: "contact", label: "Contact" },
+    { id: "support", label: "Support" },
   ];
 
   const goToNav = (id) => {
@@ -27,13 +27,6 @@ export default function Header({ view, setView, goShop, cartCount, wishCount, on
       setView("home");
       setTimeout(() => {
         document.getElementById("about-section")?.scrollIntoView({ behavior: "smooth" });
-      }, 50);
-      return;
-    }
-    if (id === "contact") {
-      setView("home");
-      setTimeout(() => {
-        document.querySelector("footer")?.scrollIntoView({ behavior: "smooth" });
       }, 50);
       return;
     }

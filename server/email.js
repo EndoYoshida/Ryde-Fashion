@@ -24,24 +24,72 @@ function getTransporter() {
   return transporter;
 }
 
+// Generic sender — everything else in this file builds on this.
+// Returns { sent, reason } rather than throwing, so callers can decide
+// how to degrade gracefully when email isn't configured or fails.
+async function sendEmail({ to, subject, text }) {
+  const t = getTransporter();
+  if (!t) return { sent: false, reason: "Email isn't configured yet (see server/.env)." };
+  try {
+    await t.sendMail({ from: `"Ryde Fashion" <${EMAIL_USER}>`, to, subject, text });
+    return { sent: true };
+  } catch (err) {
+    console.error("Failed to send email:", err.message);
+    return { sent: false, reason: err.message };
+  }
+}
+
 // Sends a reply email from the store's inbox to a customer. Returns
 // true/false rather than throwing, so a reply can still be saved in the
 // dashboard even if the email itself fails to send (e.g. not configured).
 export async function sendReplyEmail(to, subject, body) {
-  const t = getTransporter();
-  if (!t) return { sent: false, reason: "Email isn't configured yet (see server/.env)." };
-  try {
-    await t.sendMail({
-      from: `"Ryde Fashion Support" <${EMAIL_USER}>`,
-      to,
-      subject: subject.startsWith("Re:") ? subject : `Re: ${subject}`,
-      text: body,
-    });
-    return { sent: true };
-  } catch (err) {
-    console.error("Failed to send reply email:", err.message);
-    return { sent: false, reason: err.message };
-  }
+  return sendEmail({
+    to,
+    subject: subject.startsWith("Re:") ? subject : `Re: ${subject}`,
+    text: body,
+  });
+}
+
+// Sends a 6-digit email verification code after signup.
+export async function sendVerificationEmail(to, code) {
+  return sendEmail({
+    to,
+    subject: "Verify your email — Ryde Fashion",
+    text: `Welcome to Ryde Fashion!\n\nYour verification code is: ${code}\n\nEnter this code in your account page to verify your email. This code expires in 30 minutes — you can request a new one anytime if it runs out.\n\nIf you didn't create this account, you can ignore this email.`,
+  });
+}
+
+// Sends a confirmation code before permanently deleting an account.
+export async function sendDeletionConfirmationEmail(to, code) {
+  return sendEmail({
+    to,
+    subject: "Confirm account deletion — Ryde Fashion",
+    text: `We received a request to permanently delete your Ryde Fashion account.\n\nYour confirmation code is: ${code}\n\nEnter this code to confirm. This code expires in 30 minutes.\n\nIf you didn't request this, ignore this email and your account will remain exactly as it is — nothing happens without the code.`,
+  });
+}
+
+// Sends an order receipt right after checkout.
+export async function sendOrderReceiptEmail(order) {
+  const lines = order.items.map((it) => `  - ${it.name} x${it.qty} — \u20b1${(it.price * it.qty).toLocaleString()}`).join("\n");
+  const text = [
+    `Thank you for your order, ${order.customer}!`,
+    "",
+    `Order #: ${order.id}`,
+    `Payment method: ${order.paymentMethod}`,
+    "",
+    "Items:",
+    lines,
+    "",
+    `Total: \u20b1${order.total.toLocaleString()}`,
+    "",
+    `Shipping to: ${order.address}`,
+    "",
+    "We'll update you as your order is processed. You can also check its status anytime from your account's Order History.",
+    "",
+    "— Ryde Fashion & Authentic Bags and Apparel",
+  ].join("\n");
+
+  return sendEmail({ to: order.email, subject: `Your Ryde Fashion order #${order.id}`, text });
 }
 
 function makeTicketId() {

@@ -16,6 +16,7 @@ import WishlistDrawer from "./components/WishlistDrawer";
 import Checkout from "./components/Checkout";
 import AuthModal from "./components/AuthModal";
 import AccountDashboard from "./components/AccountDashboard";
+import SupportPage from "./components/SupportPage";
 import AdminLayout from "./components/admin/AdminLayout";
 import AdminLogin from "./components/admin/AdminLogin";
 
@@ -81,6 +82,10 @@ export default function App() {
   const [customerLoading, setCustomerLoading] = useState(!!localStorage.getItem("rydeCustomerToken"));
 
   useEffect(() => { window.scrollTo?.(0, 0); }, [view]);
+  // The product detail overlay is independent of `view` by design (so it
+  // can stay open while browsing), but it should never linger behind the
+  // checkout page once someone commits to buying.
+  useEffect(() => { if (view === "checkout") setSelectedProduct(null); }, [view]);
 
   // Public data only — safe to load immediately for every visitor.
   useEffect(() => {
@@ -322,6 +327,15 @@ export default function App() {
     return next;
   });
 
+  const refreshProducts = async () => {
+    try {
+      const p = await api.getProducts();
+      setProducts(p.map(withIcon));
+    } catch (err) {
+      console.error("Failed to refresh products:", err);
+    }
+  };
+
   const cartCount = cart.reduce((s, c) => s + c.qty, 0);
 
   if (loading) {
@@ -355,6 +369,12 @@ export default function App() {
         <div className="backend-error-banner">
           Can&rsquo;t reach the backend at <code>localhost:4000</code>. Run <code>npm run dev</code> inside the{" "}
           <code>server</code> folder, then refresh this page.
+        </div>
+      )}
+      {customer && !customer.emailVerified && view !== "account" && (
+        <div className="verify-banner site-wide">
+          Please verify your email to unlock your full account.
+          <button onClick={() => setView("account")}>Verify now &rarr;</button>
         </div>
       )}
 
@@ -399,7 +419,7 @@ export default function App() {
           cart={cart}
           setView={setView}
           clearCart={clearCart}
-          onOrderCreated={(order) => setOrders((prev) => [order, ...prev])}
+          onOrderCreated={(order) => { setOrders((prev) => [order, ...prev]); refreshProducts(); }}
           customer={customer}
         />
       )}
@@ -408,10 +428,13 @@ export default function App() {
         <AccountDashboard
           customer={customer}
           updateProfile={updateProfile}
+          onCustomerUpdated={setCustomer}
           onLogout={handleCustomerLogout}
           setView={setView}
         />
       )}
+
+      {view === "support" && <SupportPage customer={customer} />}
 
       <Footer goShop={goShop} setView={setView} customer={customer} onAccountOpen={handleAccountIconClick} />
 

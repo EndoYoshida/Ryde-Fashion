@@ -32,7 +32,7 @@ function rowToProduct(row) {
   };
 }
 
-function recomputeRating(productId) {
+export function recomputeRating(productId) {
   const agg = db.prepare("SELECT AVG(rating) AS avgRating, COUNT(*) AS count FROM product_ratings WHERE product_id = ?")
     .get(productId);
   const rating = agg.count > 0 ? Math.round(agg.avgRating * 10) / 10 : 0;

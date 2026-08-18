@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS customers (
   phone TEXT,
   address TEXT,
   password_hash TEXT,
+  email_verified INTEGER NOT NULL DEFAULT 0,
+  verification_code TEXT,
+  verification_code_expires_at TEXT,
   joined TEXT NOT NULL DEFAULT (date('now')),
   status TEXT NOT NULL DEFAULT 'active'
 );

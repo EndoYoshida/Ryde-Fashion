@@ -61,5 +61,25 @@ export function publicCustomer(row) {
   return {
     id: row.id, name: row.name, username: row.username, email: row.email,
     phone: row.phone, address: row.address, joined: row.joined,
+    emailVerified: !!row.email_verified,
   };
+}
+
+export function generateVerificationCode() {
+  // 6-digit numeric code, easy to type from an email on any device.
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+// Shared expiry window for both email-verification codes and
+// account-deletion confirmation codes. 30 minutes is generous enough
+// for someone to find the email without being open-ended forever.
+export const CODE_TTL_MS = 30 * 60 * 1000;
+
+export function codeExpiryTimestamp() {
+  return new Date(Date.now() + CODE_TTL_MS).toISOString();
+}
+
+export function isCodeExpired(expiresAt) {
+  if (!expiresAt) return true;
+  return new Date(expiresAt).getTime() < Date.now();
 }

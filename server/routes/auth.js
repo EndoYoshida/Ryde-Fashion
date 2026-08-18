@@ -3,8 +3,11 @@ import { OAuth2Client } from "google-auth-library";
 import { db } from "../db/index.js";
 import {
   hashPassword, verifyPassword, issueSession, endSession,
-  requireCustomer, publicCustomer,
+  requireCustomer, publicCustomer, generateVerificationCode,
+  codeExpiryTimestamp, isCodeExpired,
 } from "../customerAuth.js";
+import { sendVerificationEmail, sendDeletionConfirmationEmail } from "../email.js";
+import { recomputeRating } from "./products.js";
 
 const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -20,7 +23,7 @@ function generateUniqueUsername(base) {
 }
 
 // POST /api/auth/signup
-router.post("/signup", (req, res) => {
+router.post("/signup", async (req, res) => {
   const { name, username, email, password, phone } = req.body || {};
   if (!name?.trim() || !username?.trim() || !email?.trim() || !password) {
     return res.status(400).json({ error: "Name, username, email, and password are required" });
@@ -53,8 +56,21 @@ router.post("/signup", (req, res) => {
   `).run(name.trim(), username.trim(), email.trim().toLowerCase(), phone?.trim() || null, hashPassword(password));
 
   const customer = db.prepare("SELECT * FROM customers WHERE id = ?").get(result.lastInsertRowid);
+
+  const code = generateVerificationCode();
+  db.prepare("UPDATE customers SET verification_code = ?, verification_code_expires_at = ? WHERE id = ?")
+    .run(code, codeExpiryTimestamp(), customer.id);
+  const emailResult = await sendVerificationEmail(customer.email, code);
+  if (!emailResult.sent) {
+    console.warn(`Signup verification email not sent for ${customer.email}: ${emailResult.reason}`);
+  }
+
   const token = issueSession(customer.id);
-  res.status(201).json({ token, customer: publicCustomer(customer) });
+  res.status(201).json({
+    token,
+    customer: publicCustomer(customer),
+    verificationEmailSent: emailResult.sent,
+  });
 });
 
 // POST /api/auth/login
@@ -125,8 +141,8 @@ router.post("/google", async (req, res) => {
     const name = payload.name || email.split("@")[0];
     const username = generateUniqueUsername(payload.given_name || name || email.split("@")[0]);
     const result = db.prepare(`
-      INSERT INTO customers (name, username, email, phone, password_hash, joined, status)
-      VALUES (?, ?, ?, NULL, NULL, date('now'), 'active')
+      INSERT INTO customers (name, username, email, phone, password_hash, email_verified, joined, status)
+      VALUES (?, ?, ?, NULL, NULL, 1, date('now'), 'active')
     `).run(name, username, email);
     customer = db.prepare("SELECT * FROM customers WHERE id = ?").get(result.lastInsertRowid);
   }
@@ -177,6 +193,95 @@ router.patch("/me/password", requireCustomer, (req, res) => {
   res.status(204).end();
 });
 
+// POST /api/auth/verify-email
+router.post("/verify-email", requireCustomer, (req, res) => {
+  const { code } = req.body || {};
+  if (req.customer.email_verified) {
+    return res.json({ customer: publicCustomer(req.customer), alreadyVerified: true });
+  }
+  if (isCodeExpired(req.customer.verification_code_expires_at)) {
+    return res.status(400).json({ error: "That code has expired. Tap \"Resend code\" to get a new one.", expired: true });
+  }
+  if (!code || String(code).trim() !== req.customer.verification_code) {
+    return res.status(400).json({ error: "That code doesn't match. Double-check your email and try again." });
+  }
+  db.prepare("UPDATE customers SET email_verified = 1, verification_code = NULL, verification_code_expires_at = NULL WHERE id = ?").run(req.customer.id);
+  const updated = db.prepare("SELECT * FROM customers WHERE id = ?").get(req.customer.id);
+  res.json({ customer: publicCustomer(updated) });
+});
+
+// POST /api/auth/resend-verification
+router.post("/resend-verification", requireCustomer, async (req, res) => {
+  if (req.customer.email_verified) {
+    return res.json({ alreadySent: false, alreadyVerified: true });
+  }
+  const code = generateVerificationCode();
+  db.prepare("UPDATE customers SET verification_code = ?, verification_code_expires_at = ? WHERE id = ?")
+    .run(code, codeExpiryTimestamp(), req.customer.id);
+  const result = await sendVerificationEmail(req.customer.email, code);
+  if (!result.sent) {
+    return res.status(502).json({ error: `Couldn't send the email: ${result.reason}` });
+  }
+  res.json({ sent: true });
+});
+
+// POST /api/auth/delete-account/request
+// Verified users get an emailed confirmation code that DELETE /me will
+// require. Unverified users skip straight to password-only confirmation
+// — there's no reliable email to confirm through if it was never
+// verified in the first place.
+router.post("/delete-account/request", requireCustomer, async (req, res) => {
+  if (!req.customer.email_verified) {
+    return res.json({ requiresCode: false });
+  }
+  const code = generateVerificationCode();
+  db.prepare("UPDATE customers SET verification_code = ?, verification_code_expires_at = ? WHERE id = ?")
+    .run(code, codeExpiryTimestamp(), req.customer.id);
+  const result = await sendDeletionConfirmationEmail(req.customer.email, code);
+  if (!result.sent) {
+    return res.status(502).json({ error: `Couldn't send the confirmation email: ${result.reason}` });
+  }
+  res.json({ requiresCode: true, sent: true });
+});
+
+// DELETE /api/auth/me — permanently deletes the account.
+// Always requires the current password. Verified accounts additionally
+// require the emailed confirmation code from the request above.
+router.delete("/me", requireCustomer, (req, res) => {
+  const { password, code } = req.body || {};
+
+  if (!verifyPassword(password || "", req.customer.password_hash)) {
+    return res.status(401).json({ error: "Incorrect password." });
+  }
+  if (req.customer.email_verified) {
+    if (isCodeExpired(req.customer.verification_code_expires_at)) {
+      return res.status(400).json({ error: "That confirmation code has expired. Please request a new one.", expired: true });
+    }
+    if (!code || String(code).trim() !== req.customer.verification_code) {
+      return res.status(400).json({ error: "That confirmation code doesn't match." });
+    }
+  }
+
+  // Products this customer rated need their average recalculated once
+  // the rating disappears — gather the list before it's gone.
+  const affectedProductIds = db.prepare("SELECT DISTINCT product_id FROM product_ratings WHERE customer_id = ?")
+    .all(req.customer.id)
+    .map((r) => r.product_id);
+
+  // Orders and support tickets are kept for business records — they're
+  // matched by email/name text, not a hard foreign key, so deleting the
+  // account here doesn't erase order history on either side.
+  db.prepare("DELETE FROM customers WHERE id = ?").run(req.customer.id);
+
+  for (const productId of affectedProductIds) recomputeRating(productId);
+
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  endSession(token);
+
+  res.status(204).end();
+});
+
 // GET /api/auth/me/orders  (this customer's own order history)
 router.get("/me/orders", requireCustomer, (req, res) => {
   const orders = db.prepare("SELECT id, status, payment_status, total, date FROM orders WHERE email = ? ORDER BY date DESC")
@@ -187,6 +292,22 @@ router.get("/me/orders", requireCustomer, (req, res) => {
     items: db.prepare("SELECT name, qty, price FROM order_items WHERE order_id = ?").all(o.id),
   }));
   res.json(withItems);
+});
+
+// GET /api/auth/me/tickets  (this customer's own support tickets + replies)
+router.get("/me/tickets", requireCustomer, (req, res) => {
+  const tickets = db.prepare("SELECT * FROM tickets WHERE email = ? ORDER BY date DESC").all(req.customer.email);
+  const withReplies = tickets.map((t) => ({
+    id: t.id,
+    subject: t.subject,
+    message: t.message,
+    status: t.status,
+    date: t.date,
+    replies: db.prepare("SELECT id, body, created_at FROM ticket_replies WHERE ticket_id = ? ORDER BY created_at")
+      .all(t.id)
+      .map((r) => ({ id: r.id, body: r.body, createdAt: r.created_at })),
+  }));
+  res.json(withReplies);
 });
 
 export default router;

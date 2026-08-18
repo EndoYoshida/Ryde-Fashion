@@ -30,6 +30,9 @@ addColumnIfMissing("customers", "username", "TEXT");
 addColumnIfMissing("tickets", "message_id", "TEXT");
 addColumnIfMissing("orders", "proof_image", "TEXT");
 addColumnIfMissing("products", "description", "TEXT");
+addColumnIfMissing("customers", "email_verified", "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("customers", "verification_code", "TEXT");
+addColumnIfMissing("customers", "verification_code_expires_at", "TEXT");
 
 if (isNewDb) {
   console.log("New database created at", DB_PATH, "— starting empty (no demo data).");

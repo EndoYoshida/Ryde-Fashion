@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Ryde Fashion & Authentic Bags and Apparel
 
 A full-stack prototype: a React storefront + a separate admin dashboard,
@@ -95,12 +94,58 @@ your machine; don't expose this as-is on the open internet.
   your support inbox automatically turn into tickets here**, and you can
   reply to a customer directly from the dashboard — it sends a real
   email back to them. See "Email setup" below; this needs one thing
-  from you before it actually works.
+  from you before it actually works. Customers can submit tickets
+  through the new **Support page** on the storefront (nav bar → Support,
+  or footer → Contact us) and see the whole conversation, replies
+  included, from their account.
 
-## Email setup — needed for support tickets to actually work
+## Customer Support page
 
-The support ticket system is fully built and wired, but it needs one
-thing from you: a **Gmail App Password** for `rydecompany.ph@gmail.com`
+A real page on the storefront (not just a mailto link) — accessible from
+the header nav ("Support") or footer ("Contact us"). Customers fill in
+name, email, subject, and message; it creates a real support ticket the
+same way an emailed-in message does, and shows up instantly in the admin
+Support tab. If the customer is signed in, they can see the whole thread
+— their original message plus every admin reply — from Account → My
+Support Tickets.
+
+## Email verification
+
+Signing up sends a real 6-digit verification code by email (needs the
+same email setup as above). The account works immediately either way —
+verification isn't a hard gate — but a **"Please verify your email"**
+banner shows on every page until it's done. Two ways to verify:
+Account → Profile has a small **Verify** button right next to the email
+field, or use the dedicated Account → Verify Email tab (code entry +
+resend). Google sign-in accounts skip this entirely, since Google
+already confirmed that email belongs to them.
+
+**Codes expire after 30 minutes.** An expired code shows a clear "that
+code has expired, resend" message rather than just silently failing —
+tap Resend to get a new one.
+
+## Delete Account
+
+Account → Delete Account. Always requires the current password to
+confirm. **If the email is verified**, there's an extra step: a
+confirmation code is emailed first, and the account isn't deleted until
+that code is entered too (same 30-minute expiry as verification codes).
+Unverified accounts skip the email step, since there's no confirmed
+inbox to send it to — password confirmation alone is enough.
+
+What actually happens on delete: the account, profile, and any product
+ratings that customer left are permanently removed (product averages
+recalculate automatically once their rating disappears). Past orders
+and support tickets stay on record — they're matched by email/name
+text rather than a hard link to the account, which is normal for
+business record-keeping even after someone deletes their login.
+
+## Email setup — needed for support tickets, verification, and receipts
+
+Three features share this one setup: **support ticket import/reply**,
+**signup verification codes**, and **order receipt emails**. All of it
+is fully built and wired, but needs one thing from you: a **Gmail App
+Password** for `rydecompany.ph@gmail.com`
 (or whichever inbox you want to use). Your regular Gmail password won't
 work here — Google blocks that for security — an App Password is a
 separate 16-character code made specifically for apps like this one.
@@ -202,15 +247,37 @@ you're signed in.
 
 ## Checkout
 
-Three payment methods: **GCash**, **Bank Transfer**, and **Cash on
-Delivery**. For GCash/Bank Transfer, the customer uploads a screenshot
+Four payment options: **GCash**, **BDO**, **UnionBank**, and **Cash on
+Delivery**. For GCash/BDO/UnionBank, the customer uploads a screenshot
 of their payment as proof — that image is stored and shows up right in
 the order detail view in the admin dashboard (click "View" on an order).
 COD skips the proof step entirely, since there's nothing to prove yet.
 
-The GCash number and bank account shown at checkout
+The GCash number and both bank account numbers shown at checkout
 (`src/components/Checkout.jsx`, the `PAYMENTS` array) are placeholders —
 swap in your real account details there.
+
+**Why these aren't "real" live payments:** actually processing a GCash
+or bank payment automatically (verifying it in real time, no manual
+screenshot needed) requires registering as a merchant with a payment
+aggregator — PayMongo and Xendit are the common ones in the
+Philippines — and getting real API credentials from them. That's a
+business step only you can do, not something crediential-free. What's
+built here is the realistic alternative: the customer pays manually and
+uploads proof, an admin verifies it and marks the order paid. If you
+ever do get PayMongo/Xendit API keys, that's a well-defined next step —
+happy to wire it in at that point.
+
+**Placing an order automatically:**
+- **Decrements stock** for each item bought, by the quantity ordered
+- **Flips a product to "Sold Out" the instant its stock hits zero** — no
+  manual step needed; the storefront shows it as sold out and the admin
+  product list reflects it too, both without a page refresh
+- **Emails a receipt** to the customer (needs email configured — see
+  "Email setup" above; if it's not configured yet, the order still goes
+  through fine, just without the email)
+- The same order also **appears in the customer's Order History**
+  (Account → Order History) if they were signed in when they checked out
 
 ## Backend security hardening
 
@@ -221,10 +288,21 @@ A few things worth knowing about how customer data is protected:
   and pull customer data, even indirectly.
 - **Helmet** adds standard security headers (clickjacking protection,
   MIME-sniffing prevention, etc.) to every response.
-- **Rate limiting** on two levels: a generous cap on the whole API (500
-  requests/15 min per IP, catches scraping/DoS) and a tighter one
-  specifically on login/signup endpoints (30/15 min), on top of the
-  existing custom lockout on admin login.
+- **Rate limiting** on three levels: a generous cap on the whole API
+  (500 requests/15 min per IP, catches scraping/DoS), a tighter one on
+  login/signup endpoints (30/15 min, on top of the existing custom
+  lockout on admin login), and a dedicated one on public write actions —
+  placing orders and submitting support tickets (20/15 min) — since
+  those have real-world cost if scripted and spammed.
+- **Orders are fully re-validated and re-priced server-side — nothing
+  about price is ever trusted from the client.** The checkout request
+  only supplies a product id and quantity; the actual price, name, and
+  availability always come from the database at the moment the order is
+  placed. A tampered request claiming a lower price, an impossible
+  quantity, or a sold-out item simply can't succeed — it's rejected
+  before anything is written. Order creation also runs as a single
+  atomic database transaction, so a failure partway through can't leave
+  a half-written order or an incorrect stock count behind.
 - **Every route that touches customer PII requires a valid session
   token** — orders, customer records, and support tickets are all
   `requireAdmin`-gated; a customer's own profile/orders are
@@ -324,7 +402,12 @@ Base URL: `http://localhost:4000/api`
 | GET | `/auth/me` | customer | Get your profile |
 | PATCH | `/auth/me` | customer | Update name/phone/address |
 | PATCH | `/auth/me/password` | customer | Change password |
+| POST | `/auth/verify-email` | customer | Submit a verification code |
+| POST | `/auth/resend-verification` | customer | Send a new verification code |
+| POST | `/auth/delete-account/request` | customer | Start account deletion (emails a code if verified) |
+| DELETE | `/auth/me` | customer | Permanently delete the account |
 | GET | `/auth/me/orders` | customer | Your own order history |
+| GET | `/auth/me/tickets` | customer | Your own support tickets + replies |
 | GET | `/products` | — | List all products (with images) |
 | POST | `/products` | admin | Create a product |
 | PUT | `/products/:id` | admin | Update a product |
@@ -344,7 +427,3 @@ Base URL: `http://localhost:4000/api`
 | POST | `/tickets` | — | Submit a ticket |
 | POST | `/tickets/:id/reply` | admin | Reply to a ticket — sends a real email |
 | PATCH | `/tickets/:id/resolve` | admin | Mark a ticket resolved |
-=======
-# Ryde-Fashion
-Ryde Fashion is a modern e-commerce website designed to provide a seamless and stylish online shopping experience. The platform showcases fashion products with organized categories, product details, user authentication, and an easy-to-use interface for browsing and shopping. 
->>>>>>> a25df189a720751b71a50d1c44ddb651f9a831e4

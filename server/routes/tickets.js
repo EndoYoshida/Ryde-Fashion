@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "../db/index.js";
 import { requireAdmin } from "../auth.js";
 import { sendReplyEmail } from "../email.js";
+import { publicWriteLimiter } from "../rateLimit.js";
 
 const router = Router();
 
@@ -31,16 +32,25 @@ router.get("/", requireAdmin, (req, res) => {
 });
 
 // POST /api/tickets  (used by a real "contact us" form)
-router.post("/", (req, res) => {
+router.post("/", publicWriteLimiter, (req, res) => {
   const { customer, email, subject, message } = req.body;
-  if (!customer || !email || !subject || !message) {
+  if (!customer?.trim() || !email?.trim() || !subject?.trim() || !message?.trim()) {
     return res.status(400).json({ error: "customer, email, subject, and message are required" });
+  }
+  if (!email.includes("@") || email.length > 200) {
+    return res.status(400).json({ error: "A valid email is required" });
+  }
+  if (customer.length > 200 || subject.length > 300) {
+    return res.status(400).json({ error: "Name or subject is too long" });
+  }
+  if (message.length > 5000) {
+    return res.status(400).json({ error: "Message is too long (5000 character max)" });
   }
   const id = `TCK-${Math.floor(1000 + Math.random() * 9000)}`;
   db.prepare(`
     INSERT INTO tickets (id, customer_name, email, subject, message, status, date)
     VALUES (?, ?, ?, ?, ?, 'open', date('now'))
-  `).run(id, customer, email, subject, message);
+  `).run(id, customer.trim(), email.trim().toLowerCase(), subject.trim(), message.trim());
   const row = db.prepare("SELECT * FROM tickets WHERE id = ?").get(id);
   res.status(201).json(rowToTicket(row));
 });
