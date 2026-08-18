@@ -54,10 +54,48 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
   const [proofWarning, setProofWarning] = useState("");
 
   const [form, setForm] = useState({
-    fullName: customer?.name || "", phone: customer?.phone || "", email: customer?.email || "",
-    address: customer?.address || "", province: "", city: "", barangay: "", zip: "", notes: "",
+    fullName: customer?.name || "",
+    phoneCountryCode: customer?.phoneCountryCode || "+63",
+    phone: (customer?.phone || "").replace(/\D/g, "").slice(0, 10),
+    email: customer?.email || "",
+    addressLine: customer?.addressLine || "",
+    province: customer?.province || "", city: customer?.city || "", barangay: customer?.barangay || "",
+    zip: customer?.zipCode || "", notes: "",
   });
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  // Country code: keep a leading "+", digits only after it, capped at 4 digits.
+  const setPhoneCountryCode = (e) => {
+    const digits = e.target.value.replace(/\D/g, "").slice(0, 4);
+    setForm((f) => ({ ...f, phoneCountryCode: digits ? `+${digits}` : "+" }));
+  };
+  // Phone number: digits only, never past 10 digits.
+  const setPhone = (e) => {
+    const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+    setForm((f) => ({ ...f, phone: digits }));
+  };
+
+  // On first render the customer's profile may not have finished loading
+  // yet (e.g. landing straight on /checkout after a refresh, while
+  // getMe() is still in flight) — the form above would then start blank.
+  // Once it arrives, fill in whichever of these fields the shopper
+  // hasn't already typed something into themselves. These are the same
+  // split fields the profile page saves, so this is a direct field-to-
+  // field autofill rather than parsing one address string.
+  useEffect(() => {
+    if (!customer) return;
+    setForm((f) => ({
+      ...f,
+      fullName: f.fullName || customer.name || "",
+      phoneCountryCode: f.phoneCountryCode || customer.phoneCountryCode || "+63",
+      phone: f.phone || (customer.phone || "").replace(/\D/g, "").slice(0, 10),
+      email: f.email || customer.email || "",
+      addressLine: f.addressLine || customer.addressLine || "",
+      province: f.province || customer.province || "",
+      city: f.city || customer.city || "",
+      barangay: f.barangay || customer.barangay || "",
+      zip: f.zip || customer.zipCode || "",
+    }));
+  }, [customer]);
 
   // On first render the customer's profile may not have finished loading
   // yet (e.g. landing straight on /checkout after a refresh, while
@@ -95,7 +133,7 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
 
   const handlePlaceOrder = async () => {
     if (cart.length === 0) return;
-    if (!form.fullName.trim() || !form.phone.trim() || !form.email.trim() || !form.address.trim()) {
+    if (!form.fullName.trim() || !form.phone.trim() || !form.email.trim() || !form.addressLine.trim()) {
       setError("Please fill in your name, phone, email, and address.");
       return;
     }
@@ -108,12 +146,13 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
     setError("");
     setProofWarning("");
     try {
-      const fullAddress = [form.address, form.barangay, form.city, form.province, form.zip]
+      const fullAddress = [form.addressLine, form.barangay, form.city, form.province, form.zip]
         .filter(Boolean).join(", ");
       const order = await api.createOrder({
         id: makeOrderId(),
         customer: form.fullName,
         email: form.email,
+        phone: `${form.phoneCountryCode} ${form.phone}`.trim(),
         address: fullAddress,
         paymentMethod: PAYMENT_LABELS[payment],
         items: cart.map((c) => ({ id: c.id, name: c.name, qty: c.qty, price: c.price })),
@@ -162,10 +201,25 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
           <h4>Contact & shipping</h4>
           <div className="form-row two">
             <input placeholder="Full name" value={form.fullName} onChange={set("fullName")} />
-            <input placeholder="Phone number" value={form.phone} onChange={set("phone")} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                value={form.phoneCountryCode}
+                onChange={setPhoneCountryCode}
+                placeholder="+63"
+                style={{ width: 62, flexShrink: 0, textAlign: "center" }}
+              />
+              <input
+                placeholder="9XXXXXXXXX"
+                value={form.phone}
+                onChange={setPhone}
+                inputMode="numeric"
+                maxLength={10}
+                style={{ flex: 1 }}
+              />
+            </div>
           </div>
           <input placeholder="Email address" value={form.email} onChange={set("email")} />
-          <input placeholder="Shipping address" value={form.address} onChange={set("address")} />
+          <input placeholder="Shipping address" value={form.addressLine} onChange={set("addressLine")} />
           <div className="form-row three">
             <input placeholder="Province" value={form.province} onChange={set("province")} />
             <input placeholder="City" value={form.city} onChange={set("city")} />

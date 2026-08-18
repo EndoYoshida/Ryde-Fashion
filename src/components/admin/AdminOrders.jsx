@@ -85,6 +85,8 @@ export default function AdminOrders({ orders, updateOrderStatus, updatePaymentSt
                           <p>{o.paymentMethod}</p>
                           <strong>Email</strong>
                           <p>{o.email}</p>
+                          <strong>Phone</strong>
+                          <p>{o.phone || "—"}</p>
                           {o.proofImage && (
                             <>
                               <strong>Payment proof</strong>

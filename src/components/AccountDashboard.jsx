@@ -69,12 +69,32 @@ export default function AccountDashboard({ customer, updateProfile, onCustomerUp
 }
 
 function ProfileTab({ customer, updateProfile, onGoToVerify }) {
-  const [form, setForm] = useState({ name: customer.name, phone: customer.phone || "", address: customer.address || "" });
+  const [form, setForm] = useState({
+    name: customer.name,
+    phoneCountryCode: customer.phoneCountryCode || "+63",
+    phone: (customer.phone || "").replace(/\D/g, "").slice(0, 10),
+    addressLine: customer.addressLine || "",
+    barangay: customer.barangay || "",
+    city: customer.city || "",
+    province: customer.province || "",
+    zipCode: customer.zipCode || "",
+  });
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  // Country code: keep a leading "+", digits only after it, capped at 4
+  // digits (covers real-world codes like +63, +1, +1268).
+  const setPhoneCountryCode = (e) => {
+    const digits = e.target.value.replace(/\D/g, "").slice(0, 4);
+    setForm((f) => ({ ...f, phoneCountryCode: digits ? `+${digits}` : "+" }));
+  };
+  // Phone number: digits only, never past 10 digits.
+  const setPhone = (e) => {
+    const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+    setForm((f) => ({ ...f, phone: digits }));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -115,10 +135,41 @@ function ProfileTab({ customer, updateProfile, onGoToVerify }) {
             : <span className="admin-field-hint">Not verified yet</span>}
         </label>
         <label>Phone number
-          <div className="input-wrap"><Phone size={15} /><input value={form.phone} onChange={set("phone")} placeholder="09XX XXX XXXX" /></div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={form.phoneCountryCode}
+              onChange={setPhoneCountryCode}
+              placeholder="+63"
+              style={{ width: 62, flexShrink: 0, textAlign: "center" }}
+            />
+            <div className="input-wrap" style={{ flex: 1 }}>
+              <Phone size={15} />
+              <input
+                value={form.phone}
+                onChange={setPhone}
+                placeholder="9XXXXXXXXX"
+                inputMode="numeric"
+                maxLength={10}
+              />
+            </div>
+          </div>
         </label>
-        <label>Shipping address
-          <div className="input-wrap"><MapPin size={15} /><input value={form.address} onChange={set("address")} placeholder="Street, barangay, city, province" /></div>
+        <label>Street address
+          <div className="input-wrap"><MapPin size={15} /><input value={form.addressLine} onChange={set("addressLine")} placeholder="House/unit no., street" /></div>
+        </label>
+        <div className="form-row three">
+          <label>Province
+            <input value={form.province} onChange={set("province")} placeholder="Province" />
+          </label>
+          <label>City
+            <input value={form.city} onChange={set("city")} placeholder="City" />
+          </label>
+          <label>Barangay
+            <input value={form.barangay} onChange={set("barangay")} placeholder="Barangay" />
+          </label>
+        </div>
+        <label>ZIP code
+          <input value={form.zipCode} onChange={set("zipCode")} placeholder="ZIP code" style={{ maxWidth: 140 }} />
         </label>
 
         {error && <p className="admin-form-error">{error}</p>}
