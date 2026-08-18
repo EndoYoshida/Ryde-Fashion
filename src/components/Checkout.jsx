@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Check, Upload, X } from "lucide-react";
 import { peso } from "../data/products";
 import * as api from "../api";
@@ -58,6 +58,22 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
     address: customer?.address || "", province: "", city: "", barangay: "", zip: "", notes: "",
   });
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  // On first render the customer's profile may not have finished loading
+  // yet (e.g. landing straight on /checkout after a refresh, while
+  // getMe() is still in flight) — the form above would then start blank.
+  // Once it arrives, fill in whichever of these fields the shopper
+  // hasn't already typed something into themselves.
+  useEffect(() => {
+    if (!customer) return;
+    setForm((f) => ({
+      ...f,
+      fullName: f.fullName || customer.name || "",
+      phone: f.phone || customer.phone || "",
+      email: f.email || customer.email || "",
+      address: f.address || customer.address || "",
+    }));
+  }, [customer]);
 
   const subtotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const shipping = subtotal > 5000 || subtotal === 0 ? 0 : 250;

@@ -12,7 +12,7 @@ export default function AdminLayout({
   products, addProduct, updateProduct, deleteProduct,
   uploadImages, deleteImage,
   orders, updateOrderStatus, updatePaymentStatus,
-  customers, toggleCustomerStatus,
+  customers, toggleCustomerStatus, deleteCustomer, restoreCustomer,
   tickets, resolveTicket, refreshTicket,
 }) {
   const [tab, setTab] = useState("overview");
@@ -60,7 +60,14 @@ export default function AdminLayout({
         {tab === "orders" && (
           <AdminOrders orders={orders} updateOrderStatus={updateOrderStatus} updatePaymentStatus={updatePaymentStatus} />
         )}
-        {tab === "customers" && <AdminCustomers customers={customers} toggleCustomerStatus={toggleCustomerStatus} />}
+        {tab === "customers" && (
+          <AdminCustomers
+            customers={customers}
+            toggleCustomerStatus={toggleCustomerStatus}
+            deleteCustomer={deleteCustomer}
+            restoreCustomer={restoreCustomer}
+          />
+        )}
         {tab === "support" && <AdminSupport tickets={tickets} resolveTicket={resolveTicket} refreshTicket={refreshTicket} />}
       </main>
     </div>

@@ -118,6 +118,19 @@ export const getCustomers = () => request("/customers", {}, "admin");
 export const toggleCustomerStatusApi = (id, status) =>
   request(`/customers/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }, "admin");
 
+/* -------------------------------- Wishlist (customer) --------------------- */
+export const getMyWishlist = () => request("/wishlist", {}, "customer");
+export const addToWishlistApi = (productId) =>
+  request(`/wishlist/${productId}`, { method: "POST" }, "customer");
+export const removeFromWishlistApi = (productId) =>
+  request(`/wishlist/${productId}`, { method: "DELETE" }, "customer");
+
+/* -------------------------------- Newsletter ------------------------------ */
+export const subscribeNewsletter = (email) =>
+  request("/newsletter/subscribe", { method: "POST", body: JSON.stringify({ email }) });
+export const unsubscribeNewsletter = (email) =>
+  request("/newsletter/unsubscribe", { method: "POST", body: JSON.stringify({ email }) });
+
 /* --------------------------------- Tickets -------------------------------- */
 export const getTickets = () => request("/tickets", {}, "admin");
 export const createTicket = (ticket) => request("/tickets", { method: "POST", body: JSON.stringify(ticket) });

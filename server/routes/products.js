@@ -5,6 +5,7 @@ import { db } from "../db/index.js";
 import { upload, UPLOADS_DIR } from "../upload.js";
 import { requireAdmin } from "../auth.js";
 import { requireCustomer } from "../customerAuth.js";
+import { sendBackInStockEmail, sendNewProductEmail } from "../email.js";
 
 const router = Router();
 
@@ -39,6 +40,36 @@ export function recomputeRating(productId) {
   db.prepare("UPDATE products SET rating = ?, reviews = ? WHERE id = ?").run(rating, agg.count, productId);
 }
 
+// Emails everyone who has this product on their wishlist. Fire-and-forget
+// from the caller's point of view — a slow/failing email shouldn't hold up
+// the admin's "save product" request, so callers don't await this.
+async function notifyWishlistersBackInStock(product) {
+  const wishers = db.prepare(`
+    SELECT c.email FROM wishlist_items w
+    JOIN customers c ON c.id = w.customer_id
+    WHERE w.product_id = ? AND c.status = 'active'
+  `).all(product.id);
+  for (const { email } of wishers) {
+    try {
+      await sendBackInStockEmail(email, product);
+    } catch (err) {
+      console.error(`Failed to send back-in-stock email to ${email}:`, err.message);
+    }
+  }
+}
+
+// Emails every active newsletter subscriber about a newly uploaded product.
+async function notifySubscribersNewProduct(product) {
+  const subscribers = db.prepare("SELECT email FROM newsletter_subscribers WHERE unsubscribed = 0").all();
+  for (const { email } of subscribers) {
+    try {
+      await sendNewProductEmail(email, product);
+    } catch (err) {
+      console.error(`Failed to send new-product email to ${email}:`, err.message);
+    }
+  }
+}
+
 // GET /api/products
 router.get("/", (req, res) => {
   const rows = db.prepare("SELECT * FROM products ORDER BY id DESC").all();
@@ -57,13 +88,22 @@ router.post("/", requireAdmin, (req, res) => {
   `).run(name, brand, category, price, oldPrice ?? null, stock ?? 0, status ?? "available", tag ?? null, description?.trim() || null);
 
   const row = db.prepare("SELECT * FROM products WHERE id = ?").get(result.lastInsertRowid);
-  res.status(201).json(rowToProduct(row));
+  const product = rowToProduct(row);
+
+  // Let newsletter subscribers know a new product just went up. Not
+  // awaited — the admin's "create product" request shouldn't wait on
+  // however many emails need to go out.
+  notifySubscribersNewProduct(product);
+
+  res.status(201).json(product);
 });
 
 // PUT /api/products/:id
 router.put("/:id", requireAdmin, (req, res) => {
   const existing = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
   if (!existing) return res.status(404).json({ error: "Product not found" });
+
+  const wasOutOfStock = existing.status !== "available" || existing.stock <= 0;
 
   const merged = { ...rowToProduct(existing), ...req.body };
   db.prepare(`
@@ -77,7 +117,17 @@ router.put("/:id", requireAdmin, (req, res) => {
   );
 
   const row = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
-  res.json(rowToProduct(row));
+  const product = rowToProduct(row);
+
+  // Restocked: was unavailable/out of stock, now available with stock —
+  // let anyone with it on their wishlist know. Not awaited, same reason
+  // as above.
+  const isBackInStock = product.status === "available" && product.stock > 0;
+  if (wasOutOfStock && isBackInStock) {
+    notifyWishlistersBackInStock(product);
+  }
+
+  res.json(product);
 });
 
 // DELETE /api/products/:id

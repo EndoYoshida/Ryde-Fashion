@@ -100,3 +100,25 @@ CREATE TABLE IF NOT EXISTS ticket_replies (
   email_sent INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Newsletter subscribers. Not tied to a customer account — anyone can
+-- subscribe with just an email from the footer form. `unsubscribed` is
+-- kept as a flag rather than deleting the row, so re-subscribing with
+-- the same address doesn't fight the UNIQUE constraint.
+CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  unsubscribed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- A signed-in customer's saved wishlist, persisted server-side (rather
+-- than only in browser state) so it survives across devices/sessions and
+-- so we know who to email when a wishlisted item is back in stock.
+CREATE TABLE IF NOT EXISTS wishlist_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (customer_id, product_id)
+);

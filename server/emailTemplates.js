@@ -206,6 +206,50 @@ export function newTicketNotificationHtml({ id, customer, email, subject, messag
   });
 }
 
+export function newsletterWelcomeHtml() {
+  return layout({
+    preheader: "You're on the list for new arrivals and promotions",
+    heading: "You're subscribed!",
+    bodyHtml: `
+      <p style="margin:0;">Thanks for joining the Ryde Fashion newsletter. You'll be the first to know about new arrivals, restocks on items you've saved, and upcoming promotions.</p>
+      <p style="margin:18px 0 0; font-size:13px; color:#9C8B85;">Didn't sign up for this? You can ignore this email, or unsubscribe anytime from the link in future newsletters.</p>
+    `,
+  });
+}
+
+export function backInStockHtml(product) {
+  return layout({
+    preheader: `${product.name} is back in stock`,
+    heading: "Back in stock!",
+    bodyHtml: `
+      <p style="margin:0 0 20px;">Good news — an item on your wishlist is available again:</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:6px;">
+        <tr><td style="font-size:13px; color:${COLORS.inkSoft};">Item</td><td align="right" style="font-size:14px; color:${COLORS.ink}; font-weight:600;">${escapeHtml(product.name)}</td></tr>
+        <tr><td style="font-size:13px; color:${COLORS.inkSoft};">Brand</td><td align="right" style="font-size:13px; color:${COLORS.ink};">${escapeHtml(product.brand)}</td></tr>
+        <tr><td style="font-size:13px; color:${COLORS.inkSoft};">Price</td><td align="right" style="font-size:13px; color:${COLORS.gold}; font-weight:600;">&#8369;${Number(product.price).toLocaleString()}</td></tr>
+      </table>
+      <p style="margin:18px 0 0; font-size:13.5px;">Stock is limited, so grab it from your wishlist before it sells out again.</p>
+    `,
+  });
+}
+
+export function newProductHtml(product) {
+  return layout({
+    preheader: `New arrival: ${product.name}`,
+    heading: "New arrival",
+    bodyHtml: `
+      <p style="margin:0 0 20px;">Something new just landed at Ryde Fashion:</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:6px;">
+        <tr><td style="font-size:13px; color:${COLORS.inkSoft};">Item</td><td align="right" style="font-size:14px; color:${COLORS.ink}; font-weight:600;">${escapeHtml(product.name)}</td></tr>
+        <tr><td style="font-size:13px; color:${COLORS.inkSoft};">Brand</td><td align="right" style="font-size:13px; color:${COLORS.ink};">${escapeHtml(product.brand)}</td></tr>
+        <tr><td style="font-size:13px; color:${COLORS.inkSoft};">Category</td><td align="right" style="font-size:13px; color:${COLORS.ink};">${escapeHtml(product.category)}</td></tr>
+        <tr><td style="font-size:13px; color:${COLORS.inkSoft};">Price</td><td align="right" style="font-size:13px; color:${COLORS.gold}; font-weight:600;">&#8369;${Number(product.price).toLocaleString()}</td></tr>
+      </table>
+      <p style="margin:18px 0 0; font-size:13.5px;">Visit the shop to see it before it sells out.</p>
+    `,
+  });
+}
+
 export function replyBaseHtml(text) {
   // Generic fallback wrapper for any plain-text reply that doesn't have a
   // dedicated template above.

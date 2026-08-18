@@ -1,16 +1,31 @@
 import React, { useState } from "react";
 import logo from "../assets/logo.jpg";
 import { FacebookIcon, InstagramIcon, TikTokIcon } from "./icons/BrandIcons";
+import * as api from "../api";
 
 export default function Footer({ goShop, setView, customer, onAccountOpen }) {
   const [email, setEmail] = useState("");
   const [subscribed, setSubscribed] = useState(false);
+  const [subError, setSubError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const handleSubscribe = () => {
-    if (!email.trim() || !email.includes("@")) return;
-    setSubscribed(true);
-    setEmail("");
-    setTimeout(() => setSubscribed(false), 4000);
+  const handleSubscribe = async () => {
+    if (!email.trim() || !email.includes("@")) {
+      setSubError("Please enter a valid email address.");
+      return;
+    }
+    setBusy(true);
+    setSubError("");
+    try {
+      await api.subscribeNewsletter(email.trim());
+      setSubscribed(true);
+      setEmail("");
+      setTimeout(() => setSubscribed(false), 4000);
+    } catch (err) {
+      setSubError(err.message || "Something went wrong. Please try again.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleTrackOrder = () => {
@@ -53,12 +68,20 @@ export default function Footer({ goShop, setView, customer, onAccountOpen }) {
         </div>
         <div>
           <h5>Newsletter</h5>
-          <p className="footer-blurb">Be first to know about new arrivals and promotions.</p>
+          <p className="footer-blurb">Be first to know about new arrivals, restocks on your wishlist, and promotions.</p>
           <div className="newsletter">
-            <input placeholder="Your email" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <button className="btn-gold small" onClick={handleSubscribe}>Join</button>
+            <input
+              placeholder="Your email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSubscribe()}
+            />
+            <button className="btn-gold small" onClick={handleSubscribe} disabled={busy}>
+              {busy ? "Joining..." : "Join"}
+            </button>
           </div>
           {subscribed && <p className="footer-blurb" style={{ color: "var(--gold-light)", marginTop: 8 }}>Thanks for subscribing! &#10003;</p>}
+          {subError && <p className="admin-form-error" style={{ marginTop: 8 }}>{subError}</p>}
         </div>
       </div>
       <div className="footer-bottom">

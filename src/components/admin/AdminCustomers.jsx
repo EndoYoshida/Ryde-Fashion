@@ -1,7 +1,24 @@
-import React from "react";
+import React, { useState } from "react";
 import { peso } from "../../data/products";
 
-export default function AdminCustomers({ customers, toggleCustomerStatus }) {
+const STATUS_BADGE = {
+  active: "badge-ok",
+  suspended: "badge-soon",
+  deleted: "badge-off",
+};
+
+export default function AdminCustomers({ customers, toggleCustomerStatus, deleteCustomer, restoreCustomer }) {
+  const [confirmingId, setConfirmingId] = useState(null);
+
+  const handleDelete = (id) => {
+    if (confirmingId !== id) {
+      setConfirmingId(id);
+      return;
+    }
+    deleteCustomer(id);
+    setConfirmingId(null);
+  };
+
   return (
     <div>
       <div className="admin-topbar">
@@ -26,26 +43,44 @@ export default function AdminCustomers({ customers, toggleCustomerStatus }) {
             </tr>
           </thead>
           <tbody>
-            {customers.map((c) => (
-              <tr key={c.id}>
-                <td className="admin-table-name">{c.name}</td>
-                <td>{c.email}</td>
-                <td>{c.phone}</td>
-                <td>{c.joined}</td>
-                <td>{c.orders}</td>
-                <td>{peso(c.totalSpent)}</td>
-                <td>
-                  <span className={`status-badge inline ${c.status === "active" ? "badge-ok" : "badge-off"}`}>
-                    {c.status}
-                  </span>
-                </td>
-                <td>
-                  <button className="admin-link-btn" onClick={() => toggleCustomerStatus(c.id)}>
-                    {c.status === "active" ? "Suspend" : "Activate"}
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {customers.map((c) => {
+              const isDeleted = c.status === "deleted";
+              return (
+                <tr key={c.id}>
+                  <td className="admin-table-name">{c.name}</td>
+                  <td>{c.email}</td>
+                  <td>{c.phone}</td>
+                  <td>{c.joined}</td>
+                  <td>{c.orders}</td>
+                  <td>{peso(c.totalSpent)}</td>
+                  <td>
+                    <span className={`status-badge inline ${STATUS_BADGE[c.status] || "badge-off"}`}>
+                      {c.status}
+                    </span>
+                  </td>
+                  <td>
+                    {isDeleted ? (
+                      <button className="admin-link-btn" onClick={() => restoreCustomer(c.id)}>
+                        Restore
+                      </button>
+                    ) : (
+                      <>
+                        <button className="admin-link-btn" onClick={() => toggleCustomerStatus(c.id)}>
+                          {c.status === "active" ? "Suspend" : "Activate"}
+                        </button>
+                        <button
+                          className="admin-link-btn danger"
+                          onClick={() => handleDelete(c.id)}
+                          onBlur={() => setConfirmingId((cur) => (cur === c.id ? null : cur))}
+                        >
+                          {confirmingId === c.id ? "Confirm delete?" : "Delete"}
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

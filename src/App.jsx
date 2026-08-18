@@ -150,7 +150,9 @@ export default function App() {
   }, [adminToken]);
 
   // Loads the customer's profile once a session exists (e.g. on refresh,
-  // from the token saved in localStorage).
+  // from the token saved in localStorage). Also pulls their saved
+  // wishlist from the server so it's the same on every device, and so
+  // the backend knows who to notify when a wishlisted item restocks.
   useEffect(() => {
     if (!customerToken) { setCustomerLoading(false); return; }
     api.setCustomerToken(customerToken);
@@ -158,6 +160,8 @@ export default function App() {
       try {
         const me = await api.getMe();
         setCustomer(me);
+        const { productIds } = await api.getMyWishlist();
+        setWishlist(new Set(productIds));
       } catch (err) {
         console.error("Failed to load account:", err);
       } finally {
@@ -253,12 +257,19 @@ export default function App() {
   };
 
   // --- Admin: customers ---
-  const toggleCustomerStatus = async (id) => {
-    const current = customers.find((c) => c.id === id);
-    const nextStatus = current?.status === "active" ? "suspended" : "active";
-    await api.toggleCustomerStatusApi(id, nextStatus);
-    setCustomers((prev) => prev.map((c) => (c.id === id ? { ...c, status: nextStatus } : c)));
+  // Generic setter used by both the Suspend/Activate toggle and the
+  // Delete/Restore actions — the backend treats all three as the same
+  // "set status" operation, soft-deleting rather than removing the row.
+  const setCustomerStatus = async (id, status) => {
+    await api.toggleCustomerStatusApi(id, status);
+    setCustomers((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)));
   };
+  const toggleCustomerStatus = (id) => {
+    const current = customers.find((c) => c.id === id);
+    setCustomerStatus(id, current?.status === "active" ? "suspended" : "active");
+  };
+  const deleteCustomer = (id) => setCustomerStatus(id, "deleted");
+  const restoreCustomer = (id) => setCustomerStatus(id, "active");
 
   // --- Admin: support tickets ---
   const resolveTicket = async (id) => {
@@ -278,6 +289,11 @@ export default function App() {
     setCustomerTokenState(token);
     setCustomer(customerData);
     setAuthOpen(false);
+    // Pull their saved wishlist down from the server so items they
+    // wishlisted on another device (or a previous session) show up here.
+    api.getMyWishlist()
+      .then(({ productIds }) => setWishlist(new Set(productIds)))
+      .catch((err) => console.error("Failed to load wishlist:", err));
   };
   const handleCustomerLogout = () => {
     api.logoutCustomer();
@@ -285,6 +301,10 @@ export default function App() {
     localStorage.removeItem("rydeCustomerToken");
     setCustomerTokenState(null);
     setCustomer(null);
+    // Their wishlist is safely saved server-side — clear it from this
+    // (now signed-out) browser so the next person on this device
+    // doesn't see it.
+    setWishlist(new Set());
     setView("home");
   };
   const updateProfile = async (changes) => {
@@ -321,11 +341,21 @@ export default function App() {
   };
   const removeItem = (id) => setCart((prev) => prev.filter((c) => c.id !== id));
   const clearCart = () => setCart([]);
-  const toggleWish = (id) => setWishlist((prev) => {
-    const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
-    return next;
-  });
+  const toggleWish = (id) => {
+    const wasWished = wishlist.has(id);
+    setWishlist((prev) => {
+      const next = new Set(prev);
+      wasWished ? next.delete(id) : next.add(id);
+      return next;
+    });
+    // Signed-in customers get their wishlist persisted server-side, both
+    // so it follows them across devices and so restock emails can reach
+    // them. Guests just keep it in this browser tab for the session.
+    if (customerToken) {
+      const call = wasWished ? api.removeFromWishlistApi(id) : api.addToWishlistApi(id);
+      call.catch((err) => console.error("Failed to sync wishlist:", err));
+    }
+  };
 
   const refreshProducts = async () => {
     try {
@@ -356,6 +386,7 @@ export default function App() {
             uploadImages={uploadImages} deleteImage={deleteImage}
             orders={orders} updateOrderStatus={updateOrderStatus} updatePaymentStatus={updatePaymentStatus}
             customers={customers} toggleCustomerStatus={toggleCustomerStatus}
+            deleteCustomer={deleteCustomer} restoreCustomer={restoreCustomer}
             tickets={tickets} resolveTicket={resolveTicket} refreshTicket={refreshTicket}
           />
         )}

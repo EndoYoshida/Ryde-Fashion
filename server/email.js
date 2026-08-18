@@ -8,6 +8,9 @@ import {
   orderReceiptHtml,
   ticketReplyHtml,
   newTicketNotificationHtml,
+  newsletterWelcomeHtml,
+  backInStockHtml,
+  newProductHtml,
 } from "./emailTemplates.js";
 
 const EMAIL_USER = process.env.EMAIL_USER;
@@ -118,6 +121,39 @@ export async function sendNewTicketNotificationEmail(ticket) {
     subject: `New support message: ${ticket.subject}`,
     text,
     html: newTicketNotificationHtml(ticket),
+  });
+}
+
+// Sends a short confirmation right after someone subscribes from the
+// footer newsletter form.
+export async function sendNewsletterWelcomeEmail(to) {
+  return sendEmail({
+    to,
+    subject: "You're subscribed — Ryde Fashion",
+    text: "Thanks for joining the Ryde Fashion newsletter! You'll be the first to know about new arrivals, restocks on items you've saved, and upcoming promotions.",
+    html: newsletterWelcomeHtml(),
+  });
+}
+
+// Notifies one customer that a product on their wishlist is available
+// again. Failures are logged and swallowed by the caller (recipientEmails
+// loop) so one bad address doesn't stop the rest from going out.
+export async function sendBackInStockEmail(to, product) {
+  return sendEmail({
+    to,
+    subject: `Back in stock: ${product.name} — Ryde Fashion`,
+    text: `Good news — "${product.name}" (${product.brand}) on your wishlist is back in stock at \u20b1${Number(product.price).toLocaleString()}. Stock is limited, so grab it before it sells out again.`,
+    html: backInStockHtml(product),
+  });
+}
+
+// Notifies one newsletter subscriber about a newly uploaded product.
+export async function sendNewProductEmail(to, product) {
+  return sendEmail({
+    to,
+    subject: `New arrival: ${product.name} — Ryde Fashion`,
+    text: `Something new just landed at Ryde Fashion: "${product.name}" (${product.brand}, ${product.category}) — \u20b1${Number(product.price).toLocaleString()}. Visit the shop to see it before it sells out.`,
+    html: newProductHtml(product),
   });
 }
 

@@ -7,7 +7,6 @@ import {
   codeExpiryTimestamp, isCodeExpired,
 } from "../customerAuth.js";
 import { sendVerificationEmail, sendDeletionConfirmationEmail } from "../email.js";
-import { recomputeRating } from "./products.js";
 
 const router = Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -90,6 +89,9 @@ router.post("/login", (req, res) => {
       notRegistered: true,
     });
   }
+  if (customer.status === "deleted") {
+    return res.status(403).json({ error: "This account has been deleted." });
+  }
   if (!verifyPassword(password || "", customer.password_hash)) {
     return res.status(401).json({ error: "Incorrect password. Please try again." });
   }
@@ -147,6 +149,9 @@ router.post("/google", async (req, res) => {
     customer = db.prepare("SELECT * FROM customers WHERE id = ?").get(result.lastInsertRowid);
   }
 
+  if (customer.status === "deleted") {
+    return res.status(403).json({ error: "This account has been deleted." });
+  }
   if (customer.status === "suspended") {
     return res.status(403).json({ error: "This account has been suspended. Contact support." });
   }
@@ -244,7 +249,12 @@ router.post("/delete-account/request", requireCustomer, async (req, res) => {
   res.json({ requiresCode: true, sent: true });
 });
 
-// DELETE /api/auth/me — permanently deletes the account.
+// DELETE /api/auth/me — deactivates the account.
+// This is a soft delete: the row stays in the database (marked with
+// status 'deleted') rather than being removed, so order history, ratings,
+// and the admin's customer records stay intact. The account itself can
+// never sign in again — the password hash is cleared and every session
+// for it is ended.
 // Always requires the current password. Verified accounts additionally
 // require the emailed confirmation code from the request above.
 router.delete("/me", requireCustomer, (req, res) => {
@@ -262,22 +272,14 @@ router.delete("/me", requireCustomer, (req, res) => {
     }
   }
 
-  // Products this customer rated need their average recalculated once
-  // the rating disappears — gather the list before it's gone.
-  const affectedProductIds = db.prepare("SELECT DISTINCT product_id FROM product_ratings WHERE customer_id = ?")
-    .all(req.customer.id)
-    .map((r) => r.product_id);
+  db.prepare(`
+    UPDATE customers
+    SET status = 'deleted', password_hash = NULL, verification_code = NULL, verification_code_expires_at = NULL
+    WHERE id = ?
+  `).run(req.customer.id);
 
-  // Orders and support tickets are kept for business records — they're
-  // matched by email/name text, not a hard foreign key, so deleting the
-  // account here doesn't erase order history on either side.
-  db.prepare("DELETE FROM customers WHERE id = ?").run(req.customer.id);
-
-  for (const productId of affectedProductIds) recomputeRating(productId);
-
-  const header = req.headers.authorization || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-  endSession(token);
+  // Sign this account out everywhere, not just the current tab/token.
+  db.prepare("DELETE FROM customer_sessions WHERE customer_id = ?").run(req.customer.id);
 
   res.status(204).end();
 });

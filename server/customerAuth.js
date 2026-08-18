@@ -49,7 +49,7 @@ export function requireCustomer(req, res, next) {
   }
 
   const customer = db.prepare("SELECT * FROM customers WHERE id = ?").get(session.customer_id);
-  if (!customer || customer.status === "suspended") {
+  if (!customer || customer.status === "suspended" || customer.status === "deleted") {
     db.prepare("DELETE FROM customer_sessions WHERE token = ?").run(token);
     return res.status(401).json({ error: "This account is no longer active." });
   }

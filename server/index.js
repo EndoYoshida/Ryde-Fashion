@@ -16,6 +16,8 @@ import productsRouter from "./routes/products.js";
 import ordersRouter from "./routes/orders.js";
 import customersRouter from "./routes/customers.js";
 import ticketsRouter from "./routes/tickets.js";
+import newsletterRouter from "./routes/newsletter.js";
+import wishlistRouter from "./routes/wishlist.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -54,6 +56,8 @@ app.use("/api/products", productsRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/customers", customersRouter);
 app.use("/api/tickets", ticketsRouter);
+app.use("/api/newsletter", newsletterRouter);
+app.use("/api/wishlist", wishlistRouter);
 
 const POLL_INTERVAL_MS = 60 * 1000; // check for new support emails every minute
 

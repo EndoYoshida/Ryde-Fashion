@@ -347,8 +347,9 @@ function DeleteAccountTab({ customer, onLogout }) {
     <div className="account-panel danger-zone">
       <h4><AlertTriangle size={17} color="#9B4646" style={{ verticalAlign: "-3px", marginRight: 6 }} />Delete Account</h4>
       <p className="admin-field-hint" style={{ marginBottom: 18 }}>
-        This permanently deletes your account, profile, and saved ratings. This can&rsquo;t be undone.
-        Your past orders and support tickets stay on record for our books, but will no longer be linked to a login.
+        This deactivates your account — you won&rsquo;t be able to sign in again with it, and your profile
+        will no longer be visible to you. Your past orders, ratings, and support tickets stay on record for
+        our books, and this can&rsquo;t be undone by you.
       </p>
 
       {step === "confirm" && (
@@ -367,7 +368,7 @@ function DeleteAccountTab({ customer, onLogout }) {
         <form onSubmit={handleConfirmCode} className="admin-form" style={{ maxWidth: 260 }}>
           <p className="admin-field-hint" style={{ marginBottom: 4 }}>
             Since your email is verified, we sent a confirmation code to <strong>{customer.email}</strong>.
-            Enter it below to permanently delete your account.
+            Enter it below to confirm deactivating your account.
           </p>
           <input
             value={code}
