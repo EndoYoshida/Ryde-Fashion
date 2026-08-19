@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS products (
   stock INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'available',
   description TEXT,
+  weight REAL NOT NULL DEFAULT 0.3,
   rating REAL NOT NULL DEFAULT 0,
   reviews INTEGER NOT NULL DEFAULT 0,
   tag TEXT,

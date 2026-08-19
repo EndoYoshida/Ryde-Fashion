@@ -33,6 +33,15 @@ export default function Footer({ goShop, setView, customer, onAccountOpen }) {
     else onAccountOpen?.();
   };
 
+  const handleFaqClick = () => {
+    setView("support");
+    // Support page renders on the next tick, so wait a beat before
+    // scrolling to the FAQ section anchored at the bottom of it.
+    setTimeout(() => {
+      document.getElementById("faq")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  };
+
   return (
     <footer className="footer">
       <div className="footer-grid">
@@ -62,7 +71,7 @@ export default function Footer({ goShop, setView, customer, onAccountOpen }) {
         </div>
         <div>
           <h5>Support</h5>
-          <button onClick={() => alert("Our FAQ page is coming soon! In the meantime, reach out via Contact us and we'll get back to you.")}>FAQs</button>
+          <button onClick={handleFaqClick}>FAQs</button>
           <button onClick={handleTrackOrder}>Track order</button>
           <button onClick={() => setView("support")}>Contact us</button>
         </div>

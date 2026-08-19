@@ -102,7 +102,7 @@
 .prod-img-wrap { position:relative; aspect-ratio:1/1; background:linear-gradient(160deg, var(--blush), var(--cream)); cursor:pointer; }
 .product-img { width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--gold); }
 .product-img-photo { overflow:hidden; }
-.product-img-photo img { width:100%; height:100%; object-fit:contain; }
+.product-img-photo img { width:100%; height:100%; object-fit:cover; object-position:center; display:block; }
 .tag-badge { position:absolute; top:10px; left:10px; background:var(--ink); color:var(--gold-light); font-size:10px; padding:4px 9px; border-radius:2px; letter-spacing:0.5px; }
 .status-badge { position:absolute; top:10px; right:10px; font-size:9.5px; padding:4px 9px; border-radius:2px; letter-spacing:0.5px; text-transform:uppercase; }
 .status-badge.inline { position:static; display:inline-block; margin:10px 0; }
@@ -446,7 +446,7 @@
 
 .admin-image-grid { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
 .admin-image-thumb { position:relative; width:64px; height:64px; border-radius:6px; overflow:hidden; border:1px solid var(--beige); }
-.admin-image-thumb img { width:100%; height:100%; object-fit:contain; background:var(--cream); display:block; }
+.admin-image-thumb img { width:100%; height:100%; object-fit:cover; object-position:center; background:var(--cream); display:block; }
 .admin-image-remove { position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.55); color:#fff; border-radius:50%; width:16px; height:16px; display:flex; align-items:center; justify-content:center; }
 .admin-image-add { width:64px; height:64px; border-radius:6px; border:1px dashed var(--gold-light); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; color:var(--gold); font-size:10px; cursor:pointer; }
 .admin-image-add:hover { border-color:var(--gold); background:var(--cream); }
@@ -514,6 +514,15 @@
 .support-sent h4 { margin:4px 0 0; }
 .support-info-panel { background:var(--cream); border-radius:8px; padding:26px 28px; height:fit-content; }
 .support-info-panel h4 { display:flex; align-items:center; gap:8px; font-size:15px; margin:0 0 6px; }
+
+.faq-block { max-width:760px; margin:56px auto 0; }
+.faq-list { margin-top:28px; border-top:1px solid var(--beige); }
+.faq-item { border-bottom:1px solid var(--beige); }
+.faq-question { width:100%; display:flex; align-items:center; justify-content:space-between; gap:16px; text-align:left; padding:18px 4px; font-size:15px; font-weight:500; color:var(--ink); }
+.faq-question:hover { color:var(--gold); }
+.faq-chevron { flex-shrink:0; transition:transform .2s; color:var(--gold); }
+.faq-item.open .faq-chevron { transform:rotate(180deg); }
+.faq-answer { margin:0; padding:0 26px 20px 4px; color:var(--ink-soft); font-size:13.5px; line-height:1.7; }
 .support-email-link { display:flex; align-items:center; gap:8px; color:var(--gold); font-size:14px; font-weight:500; }
 
 @media (max-width: 700px) {

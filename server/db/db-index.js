@@ -43,6 +43,10 @@ addColumnIfMissing("customers", "province", "TEXT");
 addColumnIfMissing("customers", "zip_code", "TEXT");
 addColumnIfMissing("customers", "phone_country_code", "TEXT");
 addColumnIfMissing("orders", "phone", "TEXT");
+// Parcel weight in kilograms, used to quote J&T Express shipping fees
+// at checkout. Existing rows default to 0.3kg (a reasonable estimate
+// for fashion items) until the admin sets a real weight per product.
+addColumnIfMissing("products", "weight", "REAL NOT NULL DEFAULT 0.3");
 
 if (isNewDb) {
   console.log("New database created at", DB_PATH, "— starting empty (no demo data).");

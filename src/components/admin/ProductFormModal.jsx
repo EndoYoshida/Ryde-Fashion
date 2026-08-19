@@ -5,7 +5,7 @@ import { SERVER_ORIGIN } from "../../api";
 
 const emptyForm = {
   name: "", brand: "", category: CATEGORIES[0].id, price: "", stock: "",
-  status: "available", tag: "", description: "",
+  status: "available", tag: "", description: "", weight: "0.3",
 };
 
 export default function ProductFormModal({ product, onClose, onSave, uploadImages, deleteImage }) {
@@ -15,6 +15,7 @@ export default function ProductFormModal({ product, onClose, onSave, uploadImage
           name: product.name, brand: product.brand, category: product.category,
           price: product.price, stock: product.stock, status: product.status,
           tag: product.tag || "", description: product.description || "",
+          weight: product.weight != null ? String(product.weight) : "0.3",
         }
       : emptyForm
   );
@@ -88,6 +89,7 @@ export default function ProductFormModal({ product, onClose, onSave, uploadImage
         ...form,
         price: Number(form.price),
         stock: Number(form.stock) || 0,
+        weight: Number(form.weight) || 0.3,
         tag: form.tag || undefined,
         icon: CATEGORY_ICON[form.category],
       });
@@ -165,6 +167,9 @@ export default function ProductFormModal({ product, onClose, onSave, uploadImage
               <input type="number" min="0" value={form.stock} onChange={set("stock")} placeholder="0" />
             </label>
           </div>
+          <label>Weight (kg) — used to calculate J&amp;T shipping fees
+            <input type="number" min="0" step="0.01" value={form.weight} onChange={set("weight")} placeholder="0.3" />
+          </label>
           <label>Description
             <textarea
               value={form.description}

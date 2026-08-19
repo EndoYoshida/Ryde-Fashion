@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Check, Upload, X } from "lucide-react";
 import { peso } from "../data/products";
+import { PH_PROVINCES, calculateJntShipping, DEFAULT_ITEM_WEIGHT_KG } from "../data/jntShipping";
 import * as api from "../api";
 
 const PAYMENT_LABELS = {
@@ -114,7 +115,11 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
   }, [customer]);
 
   const subtotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
-  const shipping = subtotal > 5000 || subtotal === 0 ? 0 : 250;
+  const totalWeightKg = cart.reduce((s, c) => s + (c.weight || DEFAULT_ITEM_WEIGHT_KG) * c.qty, 0);
+  const freeShipping = subtotal > 5000 || subtotal === 0;
+  // null shipping = free, or we don't have a province yet to quote against
+  const jntFee = freeShipping ? 0 : calculateJntShipping(totalWeightKg, form.province);
+  const shipping = jntFee ?? 0;
   const total = subtotal + shipping;
   const selectedPayment = PAYMENTS.find((p) => p.id === payment);
   const needsProof = payment !== "cod";
@@ -135,6 +140,10 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
     if (cart.length === 0) return;
     if (!form.fullName.trim() || !form.phone.trim() || !form.email.trim() || !form.addressLine.trim()) {
       setError("Please fill in your name, phone, email, and address.");
+      return;
+    }
+    if (!form.province) {
+      setError("Please select your province so we can calculate your J&T shipping fee.");
       return;
     }
     if (needsProof && !proofFile) {
@@ -221,7 +230,14 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
           <input placeholder="Email address" value={form.email} onChange={set("email")} />
           <input placeholder="Shipping address" value={form.addressLine} onChange={set("addressLine")} />
           <div className="form-row three">
-            <input placeholder="Province" value={form.province} onChange={set("province")} />
+            <select value={form.province} onChange={set("province")}>
+              <option value="">Province</option>
+              {PH_PROVINCES.map(({ group, provinces }) => (
+                <optgroup label={group} key={group}>
+                  {provinces.map((p) => <option key={p} value={p}>{p}</option>)}
+                </optgroup>
+              ))}
+            </select>
             <input placeholder="City" value={form.city} onChange={set("city")} />
             <input placeholder="Barangay" value={form.barangay} onChange={set("barangay")} />
           </div>
@@ -266,7 +282,17 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
             <div className="summary-row" key={c.id}><span>{c.name} &times; {c.qty}</span><span>{peso(c.price * c.qty)}</span></div>
           ))}
           <div className="totals-row"><span>Subtotal</span><span>{peso(subtotal)}</span></div>
-          <div className="totals-row"><span>Shipping</span><span>{shipping === 0 ? "Free" : peso(shipping)}</span></div>
+          <div className="totals-row">
+            <span>Shipping (J&amp;T Express)</span>
+            <span>
+              {freeShipping ? "Free" : jntFee != null ? peso(jntFee) : "Select province"}
+            </span>
+          </div>
+          {!freeShipping && (
+            <p className="admin-field-hint" style={{ margin: "-6px 0 4px", textAlign: "right" }}>
+              Est. parcel weight: {totalWeightKg.toFixed(2)}kg
+            </p>
+          )}
           <div className="totals-row total"><span>Total</span><span>{peso(total)}</span></div>
           {error && <p className="admin-form-error" style={{ marginTop: 12 }}>{error}</p>}
           <button className="btn-gold full" disabled={cart.length === 0 || busy} onClick={handlePlaceOrder}>

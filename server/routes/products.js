@@ -25,10 +25,12 @@ function rowToProduct(row) {
     oldPrice: row.old_price ?? undefined,
     stock: row.stock,
     status: row.status,
+    weight: row.weight ?? 0.3,
     description: row.description || "",
     rating: row.rating,
     reviews: row.reviews,
     tag: row.tag ?? undefined,
+    weight: row.weight ?? 0.3,
     images: getImages(row.id),
   };
 }
@@ -78,14 +80,14 @@ router.get("/", (req, res) => {
 
 // POST /api/products
 router.post("/", requireAdmin, (req, res) => {
-  const { name, brand, category, price, oldPrice, stock, status, tag, description } = req.body;
+  const { name, brand, category, price, oldPrice, stock, status, tag, description, weight } = req.body;
   if (!name || !brand || !category || price == null) {
     return res.status(400).json({ error: "name, brand, category, and price are required" });
   }
   const result = db.prepare(`
-    INSERT INTO products (name, brand, category, price, old_price, stock, status, tag, description, rating, reviews)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
-  `).run(name, brand, category, price, oldPrice ?? null, stock ?? 0, status ?? "available", tag ?? null, description?.trim() || null);
+    INSERT INTO products (name, brand, category, price, old_price, stock, status, tag, description, weight, rating, reviews)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+  `).run(name, brand, category, price, oldPrice ?? null, stock ?? 0, status ?? "available", tag ?? null, description?.trim() || null, weight ? Number(weight) : 0.3);
 
   const row = db.prepare("SELECT * FROM products WHERE id = ?").get(result.lastInsertRowid);
   const product = rowToProduct(row);
@@ -107,12 +109,13 @@ router.put("/:id", requireAdmin, (req, res) => {
 
   const merged = { ...rowToProduct(existing), ...req.body };
   db.prepare(`
-    UPDATE products SET name=?, brand=?, category=?, price=?, old_price=?, stock=?, status=?, tag=?, description=?
+    UPDATE products SET name=?, brand=?, category=?, price=?, old_price=?, stock=?, status=?, tag=?, description=?, weight=?
     WHERE id=?
   `).run(
     merged.name, merged.brand, merged.category, merged.price,
     merged.oldPrice ?? null, merged.stock, merged.status, merged.tag ?? null,
     merged.description?.trim() || null,
+    merged.weight ? Number(merged.weight) : 0.3,
     req.params.id
   );
 
