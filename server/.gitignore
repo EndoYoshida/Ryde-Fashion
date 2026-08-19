@@ -11,3 +11,4 @@ uploads/
 *.log
 *firebase-adminsdk*.json
 serviceAccountKey.json
+sync/service-account.json

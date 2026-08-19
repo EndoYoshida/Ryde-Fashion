@@ -12,6 +12,7 @@ import { login, logout } from "./auth.js";
 import { isFirebaseConfigured } from "./firebaseAdmin.js";
 import { pollInbox, isEmailConfigured } from "./email.js";
 import { generalLimiter, authLimiter } from "./rateLimit.js";
+import { startSheetsSyncScheduler } from "./sync/scheduler.js";
 import authRouter from "./routes/auth.js";
 import productsRouter from "./routes/products.js";
 import ordersRouter from "./routes/orders.js";
@@ -82,4 +83,5 @@ app.listen(PORT, () => {
   } else {
     console.warn("Warning: EMAIL_USER/EMAIL_APP_PASSWORD are not set in server/.env — support emails won't be imported and replies won't send. See README.");
   }
+  startSheetsSyncScheduler();
 });
