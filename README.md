@@ -16,6 +16,7 @@ Ryde Fashion is a full-stack e-commerce prototype for authentic bags and apparel
 /
 ├── src/        # React storefront
 └── server/     # Express API + SQLite database
+    └── sync/   # Google Sheets/Drive product sync (optional)
 ```
 
 ## Running the Project
@@ -127,6 +128,45 @@ to the Google OAuth Client ID's **Authorized JavaScript origins**.
 
 Keep sensitive credentials in `server/.env`.
 
+## Google Sheets Product Sync (optional)
+
+Products can be managed in a Google Sheet — with photos stored in Google
+Drive — instead of (or alongside) the admin dashboard. On a schedule, the
+server reads the Sheet and creates/updates/removes products to match it.
+
+Quick summary:
+
+- Requires a free Google Cloud service account (read-only access to your
+  Sheet and Drive folder).
+- Matches rows to products by a required `sku` column, so re-syncing is
+  safe and idempotent.
+- Downloads any Drive-linked photos into `server/uploads/` automatically.
+- Triggers the same "new product" / "back in stock" customer emails a
+  manual admin edit would.
+- Can run on a built-in interval inside the server, or as a one-off
+  script (`npm run sync:sheet`) suitable for an external/OS cron job.
+
+Full setup steps, the exact sheet column layout, image sizing guidance,
+and troubleshooting live in
+[`server/sync/README-SHEETS-SYNC.md`](server/sync/README-SHEETS-SYNC.md).
+
+New env vars this adds to `server/.env` (all optional — the feature is
+off unless configured): `GOOGLE_SERVICE_ACCOUNT_KEY_FILE`,
+`SHEETS_SYNC_SHEET_ID`, `SHEETS_SYNC_RANGE`, `SHEETS_SYNC_ENABLED`,
+`SHEETS_SYNC_INTERVAL_MINUTES`, `SHEETS_SYNC_DELETE_MISSING`.
+
+**Never commit `server/sync/service-account.json`** — it's a credential,
+same as `server/.env`.
+
+## Automatic Bestsellers
+
+Products can be automatically flagged as "Bestseller" based on real,
+paid order history (top sellers over a trailing window), instead of
+relying only on manually tagging them in the admin dashboard. Runs on a
+schedule with no external setup required — details, tuning options, and
+how it interacts with manual tagging are in
+[`server/bestsellers/README-BESTSELLERS.md`](server/bestsellers/README-BESTSELLERS.md).
+
 ## Database
 
 The project uses SQLite at:
@@ -198,6 +238,8 @@ Before public deployment, configure:
 ## Important Notes
 
 - Do not commit `server/.env`.
+- Do not commit `server/sync/service-account.json` (if using the Google
+  Sheets product sync).
 - Replace placeholder payment information before public use.
 - Google OAuth must use the correct frontend origin.
 - Email features require a Gmail App Password.

@@ -11,7 +11,8 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
   const filtered = useMemo(() => {
     let list = products.filter((p) => p.price <= priceMax);
     if (categoryFilter) list = list.filter((p) => p.category === categoryFilter);
-    if (tagFilter) list = list.filter((p) => p.tag === tagFilter);
+    if (tagFilter === "Bestseller") list = list.filter((p) => p.bestseller);
+    else if (tagFilter) list = list.filter((p) => p.tag === tagFilter);
     if (search) list = list.filter((p) => (p.name + p.brand).toLowerCase().includes(search.toLowerCase()));
     if (availOnly) list = list.filter((p) => p.status === "available");
     if (sort === "price-asc") list = [...list].sort((a, b) => a.price - b.price);
@@ -48,7 +49,14 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
             <h5>Category</h5>
             <button className={`filter-chip ${!categoryFilter ? "active" : ""}`} onClick={() => setCategoryFilter(null)}>All</button>
             {CATEGORIES.map((c) => (
-              <button key={c.id} className={`filter-chip ${categoryFilter === c.id ? "active" : ""}`} onClick={() => setCategoryFilter(c.id)}>{c.name}</button>
+              <button
+                key={c.id}
+                className={`filter-chip ${categoryFilter === c.id ? "active" : ""}`}
+                style={categoryFilter === c.id ? { color: c.color } : undefined}
+                onClick={() => setCategoryFilter(c.id)}
+              >
+                {c.name}
+              </button>
             ))}
           </div>
           <div className="filter-group">

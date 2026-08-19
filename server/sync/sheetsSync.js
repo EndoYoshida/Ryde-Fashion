@@ -1,13 +1,26 @@
+import fs from "fs";
+import path from "path";
 import { db } from "../db/index.js";
+import { UPLOADS_DIR } from "../upload.js";
 import { getSheetsClient } from "./googleAuth.js";
 import { extractDriveFileId, downloadDriveImage } from "./driveImages.js";
 import { runSheetsSyncMigration } from "./migrate.js";
+import { rowToProduct, notifyWishlistersBackInStock, notifySubscribersNewProduct } from "../routes/products.js";
 
 runSheetsSyncMigration();
 
 // Sheet tab + range to read. Override via env if your tab isn't named
 // "Products" or you want to cap how many rows get scanned.
 const SHEET_RANGE = process.env.SHEETS_SYNC_RANGE || "Products";
+
+// Keep this in lockstep with src/data/products.js's CATEGORIES list — it's
+// duplicated here (rather than imported) because the server and frontend
+// are separate builds. If you add/rename a category on the frontend,
+// update this list too, or sheet rows using the new category will get
+// skipped with an "unknown category" error in the sync summary.
+const VALID_CATEGORIES = new Set([
+  "bags", "apparel", "shoes", "watches", "perfume", "makeup", "wallets", "accessories",
+]);
 
 // Header names are matched case-insensitively with spaces/underscores
 // ignored, so "Old Price", "old_price", and "OLDPRICE" all work the same.
@@ -89,6 +102,10 @@ async function fetchRows() {
   return { fieldMap, records };
 }
 
+// Mirrors the PUT /api/products/:id route's own logic for deciding
+// "was this out of stock and is it now available" — kept in sync with
+// that route intentionally, since a sheet-driven restock should notify
+// wishlisters exactly the same way an admin-driven restock does.
 function upsertProduct(record) {
   if (!record.sku) {
     return { skipped: true, reason: "missing sku" };
@@ -96,11 +113,15 @@ function upsertProduct(record) {
   if (!record.name || !record.brand || !record.category || record.price === undefined) {
     return { skipped: true, reason: "missing required field (name/brand/category/price)" };
   }
+  if (!VALID_CATEGORIES.has(record.category)) {
+    return { skipped: true, reason: `unknown category "${record.category}" — must be one of: ${[...VALID_CATEGORIES].join(", ")}` };
+  }
 
   const price = toIntOrNull(record.price);
   if (price === null) return { skipped: true, reason: "invalid price" };
 
-  const existing = db.prepare("SELECT id FROM products WHERE sku = ?").get(record.sku);
+  const existing = db.prepare("SELECT * FROM products WHERE sku = ?").get(record.sku);
+  const wasOutOfStock = existing ? (existing.status !== "available" || existing.stock <= 0) : false;
 
   const values = {
     name: record.name,
@@ -134,7 +155,7 @@ function upsertProduct(record) {
     productId = result.lastInsertRowid;
   }
 
-  return { skipped: false, productId, created: !existing };
+  return { skipped: false, productId, created: !existing, wasOutOfStock };
 }
 
 function hasDriveImage(productId, driveFileId) {
@@ -172,9 +193,30 @@ async function syncImagesForProduct(productId, imagesCell) {
   return { added, failed };
 }
 
+// Deletes products whose sku was previously synced but no longer appears
+// in the sheet. Only ever touches rows that HAVE a sku — anything created
+// by hand in the admin dashboard (sku is NULL there) is never a candidate,
+// so this can't accidentally wipe out manually-added products.
+function deleteMissingSkus(seenSkus) {
+  const allSynced = db.prepare("SELECT id, sku FROM products WHERE sku IS NOT NULL").all();
+  const toDelete = allSynced.filter((p) => !seenSkus.has(p.sku));
+
+  let deleted = 0;
+  for (const { id } of toDelete) {
+    const images = db.prepare("SELECT filename FROM product_images WHERE product_id = ?").all(id);
+    db.prepare("DELETE FROM products WHERE id = ?").run(id); // product_images cascades
+    for (const { filename } of images) {
+      fs.unlink(path.join(UPLOADS_DIR, filename), () => {});
+    }
+    deleted++;
+  }
+  return deleted;
+}
+
 export async function runSheetsSync() {
   const startedAt = Date.now();
-  const summary = { created: 0, updated: 0, skipped: 0, imagesAdded: 0, imagesFailed: 0, errors: [] };
+  const summary = { created: 0, updated: 0, skipped: 0, deleted: 0, imagesAdded: 0, imagesFailed: 0, errors: [] };
+  const seenSkus = new Set();
 
   let records;
   try {
@@ -193,12 +235,27 @@ export async function runSheetsSync() {
         summary.errors.push(`Row for sku="${record.sku || "?"}" skipped: ${result.reason}`);
         continue;
       }
+      seenSkus.add(record.sku);
       if (result.created) summary.created++;
       else summary.updated++;
 
       const { added, failed } = await syncImagesForProduct(result.productId, record.images);
       summary.imagesAdded += added;
       summary.imagesFailed += failed;
+
+      // Same notification behavior as the admin dashboard's create/update
+      // routes (see routes/products.js) — fire-and-forget, each recipient's
+      // send is individually try/caught inside these functions already.
+      const row = db.prepare("SELECT * FROM products WHERE id = ?").get(result.productId);
+      const product = rowToProduct(row);
+      if (result.created) {
+        notifySubscribersNewProduct(product);
+      } else {
+        const isBackInStock = product.status === "available" && product.stock > 0;
+        if (result.wasOutOfStock && isBackInStock) {
+          notifyWishlistersBackInStock(product);
+        }
+      }
     } catch (err) {
       summary.skipped++;
       summary.errors.push(`Row for sku="${record.sku || "?"}" failed: ${err.message}`);
@@ -206,10 +263,22 @@ export async function runSheetsSync() {
     }
   }
 
+  // Safety: only prune deleted-from-sheet products if the sheet actually
+  // produced at least one valid, matched row this run. Otherwise a
+  // transient read failure or a misconfigured range (e.g. the header row
+  // format changed) could look like "the whole sheet is now empty" and
+  // wipe out every synced product — this guard prevents that.
+  const deletionsEnabled = process.env.SHEETS_SYNC_DELETE_MISSING !== "false";
+  if (deletionsEnabled && seenSkus.size > 0) {
+    summary.deleted = deleteMissingSkus(seenSkus);
+  } else if (deletionsEnabled && seenSkus.size === 0) {
+    summary.errors.push("Skipped deletion pass: no valid rows synced this run (safety guard).");
+  }
+
   const ms = Date.now() - startedAt;
   console.log(
     `[sheets-sync] done in ${ms}ms — created ${summary.created}, updated ${summary.updated}, ` +
-    `skipped ${summary.skipped}, images +${summary.imagesAdded} (${summary.imagesFailed} failed)`
+    `deleted ${summary.deleted}, skipped ${summary.skipped}, images +${summary.imagesAdded} (${summary.imagesFailed} failed)`
   );
   if (summary.errors.length) {
     console.warn("[sheets-sync] issues:\n" + summary.errors.map((e) => ` - ${e}`).join("\n"));

@@ -5,7 +5,7 @@ import BlossomDivider from "./ui/BlossomDivider";
 
 export default function Categories({ goShop, products }) {
   const newCount = products.filter((p) => p.tag === "New").length;
-  const bestCount = products.filter((p) => p.tag === "Bestseller").length;
+  const bestCount = products.filter((p) => p.bestseller).length;
 
   return (
     <section className="section">
@@ -35,7 +35,7 @@ export default function Categories({ goShop, products }) {
           const count = products.filter((p) => p.category === c.id).length;
           return (
             <button key={c.id} className="cat-card" onClick={() => goShop({ category: c.id })}>
-              <c.icon size={26} strokeWidth={1.25} color="#8A5A46" />
+              <c.icon size={26} strokeWidth={1.25} color={c.color} />
               <span className="cat-name">{c.name}</span>
               <span className="cat-count">{count} items</span>
               <span className="cat-browse">Browse <ChevronRight size={14} /></span>

@@ -15,7 +15,7 @@ function getImages(productId) {
     .map((row) => ({ id: row.id, url: `/uploads/${row.filename}` }));
 }
 
-function rowToProduct(row) {
+export function rowToProduct(row) {
   return {
     id: row.id,
     name: row.name,
@@ -31,6 +31,11 @@ function rowToProduct(row) {
     reviews: row.reviews,
     tag: row.tag ?? undefined,
     weight: row.weight ?? 0.3,
+    // True if either an admin/sheet manually set tag="Bestseller", OR the
+    // automatic sales-based computation (server/bestsellers/compute.js)
+    // flagged it. Either source is enough — see that module for the
+    // "top N by units sold in the last N days" logic.
+    bestseller: row.tag === "Bestseller" || Boolean(row.auto_bestseller),
     images: getImages(row.id),
   };
 }
@@ -45,7 +50,7 @@ export function recomputeRating(productId) {
 // Emails everyone who has this product on their wishlist. Fire-and-forget
 // from the caller's point of view — a slow/failing email shouldn't hold up
 // the admin's "save product" request, so callers don't await this.
-async function notifyWishlistersBackInStock(product) {
+export async function notifyWishlistersBackInStock(product) {
   const wishers = db.prepare(`
     SELECT c.email FROM wishlist_items w
     JOIN customers c ON c.id = w.customer_id
@@ -61,7 +66,7 @@ async function notifyWishlistersBackInStock(product) {
 }
 
 // Emails every active newsletter subscriber about a newly uploaded product.
-async function notifySubscribersNewProduct(product) {
+export async function notifySubscribersNewProduct(product) {
   const subscribers = db.prepare("SELECT email FROM newsletter_subscribers WHERE unsubscribed = 0").all();
   for (const { email } of subscribers) {
     try {

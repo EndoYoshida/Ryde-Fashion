@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch index.js",
     "start": "node index.js",
-    "sync:sheet": "node sync/run.js"
+    "sync:sheet": "node sync/run.js",
+    "compute:bestsellers": "node bestsellers/run.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",

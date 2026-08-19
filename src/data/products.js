@@ -3,14 +3,14 @@ import {
 } from "lucide-react";
 
 export const CATEGORIES = [
-  { id: "bags", name: "Bags", icon: ShoppingBag },
-  { id: "apparel", name: "Apparel", icon: Shirt },
-  { id: "shoes", name: "Shoes", icon: Footprints },
-  { id: "watches", name: "Watches", icon: Watch },
-  { id: "perfume", name: "Perfume", icon: Droplet },
-  { id: "makeup", name: "Makeup", icon: Palette },
-  { id: "wallets", name: "Wallets", icon: Wallet },
-  { id: "accessories", name: "Accessories", icon: Gem },
+  { id: "bags", name: "Bags", icon: ShoppingBag, color: "#8A5A46" },
+  { id: "apparel", name: "Apparel", icon: Shirt, color: "#5E7C6B" },
+  { id: "shoes", name: "Shoes", icon: Footprints, color: "#6E5A8A" },
+  { id: "watches", name: "Watches", icon: Watch, color: "#4A6E8A" },
+  { id: "perfume", name: "Perfume", icon: Droplet, color: "#B0567A" },
+  { id: "makeup", name: "Makeup", icon: Palette, color: "#C9A15F" },
+  { id: "wallets", name: "Wallets", icon: Wallet, color: "#7A6A4F" },
+  { id: "accessories", name: "Accessories", icon: Gem, color: "#3E7C7C" },
 ];
 
 // Maps a category id to its default icon component, used when the
