@@ -41,13 +41,41 @@ export default function App() {
   const [area, setArea] = useState(() =>
     window.location.pathname.startsWith("/admin") ? "admin" : "store"
   );
+
+  // `view` now maps 1:1 to a real URL, so each "page" (home/shop/support/
+  // checkout/account) is its own route instead of a scroll target on one
+  // long page. Initialized from the current path so a hard refresh or a
+  // shared link lands directly on the right page.
+  const pathForView = (v) =>
+    ({ home: "/", shop: "/shop", support: "/support", checkout: "/checkout", account: "/account" }[v] || "/");
+  const viewForPath = (path) => {
+    if (path === "/shop") return "shop";
+    if (path === "/support") return "support";
+    if (path === "/checkout") return "checkout";
+    if (path === "/account") return "account";
+    return "home";
+  };
+  const [view, setView] = useState(() => viewForPath(window.location.pathname));
+
+  // Single entry point for switching pages: updates the URL and the view
+  // together, so back/forward and page refresh always match what's on
+  // screen. Passed down as the `setView` prop wherever a component just
+  // wants to say "go to home/checkout/account" — same call signature as
+  // before, it just also carries a real URL now.
+  const navigateTo = (v) => {
+    window.history.pushState(null, "", pathForView(v));
+    setView(v);
+  };
+
   useEffect(() => {
-    const onPop = () => setArea(window.location.pathname.startsWith("/admin") ? "admin" : "store");
+    const onPop = () => {
+      const path = window.location.pathname;
+      setArea(path.startsWith("/admin") ? "admin" : "store");
+      setView(viewForPath(path));
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-
-  const [view, setView] = useState("home");
   const [cart, setCart] = useState([]);
   const [wishlist, setWishlist] = useState(new Set());
   const [cartOpen, setCartOpen] = useState(false);
@@ -308,7 +336,7 @@ export default function App() {
     // (now signed-out) browser so the next person on this device
     // doesn't see it.
     setWishlist(new Set());
-    setView("home");
+    navigateTo("home");
   };
   const updateProfile = async (changes) => {
     const updated = await api.updateMe(changes);
@@ -317,29 +345,46 @@ export default function App() {
   };
 
   const handleAccountIconClick = () => {
-    if (customer) setView("account");
+    if (customer) navigateTo("account");
     else setAuthOpen(true);
   };
 
-  // Browse and Support live as sections on the same scrollable home
-  // layout (like About), not as separate views — so getting to any of
-  // them means landing on "home" first (in case we're on a dedicated
-  // view like checkout/account) and then smooth-scrolling to the
-  // section once it's actually on the page.
-  const scrollToSection = (id) => {
-    setView("home");
+  // Scrolls to an anchor that lives *within* the current page (e.g.
+  // "about-section" on Home, "faq" on Support) — used after navigating
+  // to that page, or directly if already there.
+  const scrollToId = (id) => {
     setTimeout(() => {
       document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
     }, 50);
   };
 
-  // Single entry point for "go to the shop" actions across the site.
+  // Home, Shop, and Support are now separate pages/routes rather than
+  // sections on one scrollable landing page.
+  const goAbout = () => {
+    if (view !== "home") navigateTo("home");
+    scrollToId("about-section");
+  };
+  const goSupport = (anchorId) => {
+    navigateTo("support");
+    if (anchorId) scrollToId(anchorId);
+  };
   // Always explicitly sets category/tag filters (even to null) so a
   // previous filter never lingers when navigating from somewhere else.
   const goShop = (opts = {}) => {
     setCategoryFilter(opts.category ?? null);
     setTagFilter(opts.tag ?? null);
-    scrollToSection("browse-section");
+    navigateTo("shop");
+  };
+  // Header and Footer still call this by the section id they always have
+  // (about-section, browse-section, support-section, faq) — it routes
+  // each one to its real page now instead of assuming they're all on
+  // the same scrollable home layout.
+  const scrollToSection = (id) => {
+    if (id === "about-section") return goAbout();
+    if (id === "browse-section") return goShop();
+    if (id === "faq") return goSupport("faq");
+    if (id === "support-section") return goSupport();
+    scrollToId(id);
   };
 
   const addToCart = (p, qty = 1) => {
@@ -419,12 +464,12 @@ export default function App() {
       {customer && !customer.emailVerified && view !== "account" && (
         <div className="verify-banner site-wide">
           Please verify your email to unlock your full account.
-          <button onClick={() => setView("account")}>Verify now &rarr;</button>
+          <button onClick={() => navigateTo("account")}>Verify now &rarr;</button>
         </div>
       )}
 
       <Header
-        view={view} setView={setView} goShop={goShop} scrollToSection={scrollToSection}
+        view={view} setView={navigateTo} goShop={goShop} scrollToSection={scrollToSection}
         cartCount={cartCount} wishCount={wishlist.size}
         onCartOpen={() => setCartOpen(true)} onWishlistOpen={() => setWishlistOpen(true)}
         onAccountOpen={handleAccountIconClick}
@@ -439,29 +484,33 @@ export default function App() {
           <About />
           <Categories goShop={goShop} products={products} />
           <FeaturedProducts products={products} openProduct={setSelectedProduct} toggleWish={toggleWish} wishlist={wishlist} addToCart={addToCart} goShop={goShop} />
-          <Browse
-            products={products}
-            openProduct={setSelectedProduct}
-            toggleWish={toggleWish}
-            wishlist={wishlist}
-            addToCart={addToCart}
-            search={search}
-            setSearch={setSearch}
-            categoryFilter={categoryFilter}
-            setCategoryFilter={setCategoryFilter}
-            tagFilter={tagFilter}
-            setTagFilter={setTagFilter}
-          />
           <Testimonials />
           <CTA goShop={goShop} />
-          <SupportPage customer={customer} />
         </>
       )}
+
+      {view === "shop" && (
+        <Browse
+          products={products}
+          openProduct={setSelectedProduct}
+          toggleWish={toggleWish}
+          wishlist={wishlist}
+          addToCart={addToCart}
+          search={search}
+          setSearch={setSearch}
+          categoryFilter={categoryFilter}
+          setCategoryFilter={setCategoryFilter}
+          tagFilter={tagFilter}
+          setTagFilter={setTagFilter}
+        />
+      )}
+
+      {view === "support" && <SupportPage customer={customer} />}
 
       {view === "checkout" && (
         <Checkout
           cart={cart}
-          setView={setView}
+          setView={navigateTo}
           clearCart={clearCart}
           onOrderCreated={(order) => { setOrders((prev) => [order, ...prev]); refreshProducts(); }}
           customer={customer}
@@ -474,14 +523,14 @@ export default function App() {
           updateProfile={updateProfile}
           onCustomerUpdated={setCustomer}
           onLogout={handleCustomerLogout}
-          setView={setView}
+          setView={navigateTo}
         />
       )}
 
-      <Footer goShop={goShop} setView={setView} scrollToSection={scrollToSection} customer={customer} onAccountOpen={handleAccountIconClick} />
+      <Footer goShop={goShop} setView={navigateTo} scrollToSection={scrollToSection} customer={customer} onAccountOpen={handleAccountIconClick} />
 
       <ProductDetail product={selectedProduct} onClose={() => setSelectedProduct(null)} addToCart={addToCart} toggleWish={toggleWish} wishlist={wishlist} products={products} openProduct={setSelectedProduct} customer={customer} rateProduct={rateProduct} />
-      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} cart={cart} updateQty={updateQty} removeItem={removeItem} setView={setView} />
+      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} cart={cart} updateQty={updateQty} removeItem={removeItem} setView={navigateTo} />
       <WishlistDrawer open={wishlistOpen} onClose={() => setWishlistOpen(false)} wishlist={wishlist} toggleWish={toggleWish} addToCart={addToCart} openProduct={setSelectedProduct} products={products} />
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onAuthSuccess={handleAuthSuccess} />
     </div>
