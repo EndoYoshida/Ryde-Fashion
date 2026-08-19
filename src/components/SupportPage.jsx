@@ -72,7 +72,7 @@ export default function SupportPage({ customer }) {
   };
 
   return (
-    <section className="section support-section">
+    <section className="section support-section" id="support-section">
       <div className="section-head">
         <p className="eyebrow">We&rsquo;re here to help</p>
         <h2>Customer Support</h2>

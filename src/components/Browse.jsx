@@ -25,7 +25,7 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
   const heading = tagFilter === "New" ? "New Arrivals" : tagFilter === "Bestseller" ? "Best Sellers" : "Shop all products";
 
   return (
-    <section className="browse">
+    <section className="browse" id="browse-section">
       <div className="browse-head">
         <p className="eyebrow">The collection</p>
         <h2>{heading}</h2>

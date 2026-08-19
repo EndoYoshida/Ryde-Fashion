@@ -1,9 +1,27 @@
-import React, { useState } from "react";
-import { ShoppingBag, Heart, Search, Menu, User } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import { ShoppingBag, Heart, Search, Menu, User, X, ArrowRight } from "lucide-react";
 import logo from "../assets/logo.jpg";
+import { peso } from "../data/products";
+import { SERVER_ORIGIN } from "../api";
 
-export default function Header({ view, setView, goShop, cartCount, wishCount, onCartOpen, onWishlistOpen, onAccountOpen, customer, search, setSearch }) {
+const MAX_RESULTS = 6;
+
+export default function Header({ view, setView, goShop, scrollToSection, cartCount, wishCount, onCartOpen, onWishlistOpen, onAccountOpen, customer, search, setSearch, products = [], openProduct }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  // Shop/About/Support all scroll to a section on the home view rather than
+  // switching to a dedicated view, so `view` alone can't tell us which nav
+  // item (if any) should be highlighted — it's just "home" for all of them.
+  // This tracks the intended highlight separately, and resets to "home"
+  // any time we leave the home view (checkout, account, etc.).
+  const [activeSection, setActiveSection] = useState("home");
+  const searchWrapRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (view !== "home") setActiveSection("home");
+  }, [view]);
+
   const nav = [
     { id: "home", label: "Home" },
     { id: "browse", label: "Shop" },
@@ -12,6 +30,7 @@ export default function Header({ view, setView, goShop, cartCount, wishCount, on
   ];
 
   const goToNav = (id) => {
+    setActiveSection(id);
     if (id === "home") {
       setView("home");
       setTimeout(() => {
@@ -24,13 +43,53 @@ export default function Header({ view, setView, goShop, cartCount, wishCount, on
       return;
     }
     if (id === "about") {
-      setView("home");
-      setTimeout(() => {
-        document.getElementById("about-section")?.scrollIntoView({ behavior: "smooth" });
-      }, 50);
+      scrollToSection("about-section");
+      return;
+    }
+    if (id === "support") {
+      scrollToSection("support-section");
       return;
     }
     setView(id);
+  };
+
+  const openSearch = () => {
+    setSearchOpen(true);
+    // Wait for the expand animation's width to actually apply before
+    // focusing, otherwise the cursor jumps in visually mid-transition.
+    setTimeout(() => inputRef.current?.focus(), 10);
+  };
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+  };
+
+  // Closes the dropdown when focus leaves the whole search wrapper (input,
+  // results table, clear button) rather than any single element within it —
+  // relatedTarget is null for clicks outside the document (e.g. scrollbar),
+  // so we only close when we're sure focus actually moved elsewhere.
+  const handleBlur = (e) => {
+    if (searchWrapRef.current && !searchWrapRef.current.contains(e.relatedTarget)) {
+      closeSearch();
+    }
+  };
+
+  const term = search.trim().toLowerCase();
+  const matches = term
+    ? products.filter((p) => (p.name + " " + p.brand).toLowerCase().includes(term))
+    : [];
+  const results = matches.slice(0, MAX_RESULTS);
+  const totalMatches = matches.length;
+
+  const viewAllResults = () => {
+    setActiveSection("browse");
+    scrollToSection("browse-section");
+    closeSearch();
+  };
+
+  const pickResult = (product) => {
+    openProduct?.(product);
+    closeSearch();
   };
 
   return (
@@ -40,33 +99,101 @@ export default function Header({ view, setView, goShop, cartCount, wishCount, on
         <button className="icon-btn mobile-only" onClick={() => setMenuOpen((m) => !m)} aria-label="Menu">
           <Menu size={20} />
         </button>
-        <button className="brand" onClick={() => setView("home")}>
+        <button className="brand" onClick={() => goToNav("home")}>
           <img src={logo} alt="Ryde Fashion logo" className="logo-img" />
           <span className="brand-name">RYDE</span>
           <span className="brand-sub">Fashion &amp; Authentic Goods</span>
         </button>
         <nav className="nav-links desktop-only">
           {nav.map((n) => (
-            <button key={n.id} className={`nav-link ${view === n.id ? "active" : ""}`} onClick={() => goToNav(n.id)}>
+            <button key={n.id} className={`nav-link ${activeSection === n.id ? "active" : ""}`} onClick={() => goToNav(n.id)}>
               {n.label}
             </button>
           ))}
         </nav>
         <div className="header-actions">
-          <div className="search-box desktop-only">
-            <Search size={15} />
-            <input value={search} onChange={(e) => { setSearch(e.target.value); setView("browse"); }} placeholder="Search products..." />
+          <div
+            className={`header-search desktop-only ${searchOpen ? "is-open" : ""}`}
+            ref={searchWrapRef}
+            onBlur={handleBlur}
+          >
+            <button
+              type="button"
+              className="icon-btn header-search-toggle"
+              onClick={() => (searchOpen ? closeSearch() : openSearch())}
+              aria-label={searchOpen ? "Close search" : "Search"}
+            >
+              <Search size={19} />
+            </button>
+            <div className="header-search-expand">
+              <input
+                ref={inputRef}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && term && viewAllResults()}
+                placeholder="Search products..."
+              />
+              {search && (
+                <button type="button" className="header-search-clear" onClick={() => setSearch("")} aria-label="Clear search" tabIndex={-1}>
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            {searchOpen && term && (
+              <div className="header-search-results">
+                {results.length === 0 ? (
+                  <p className="header-search-empty">No products match "{search}".</p>
+                ) : (
+                  <>
+                    <table className="header-search-table">
+                      <tbody>
+                        {results.map((p) => {
+                          const rawUrl = p.images?.[0]?.url;
+                          // Product images are served from the API origin (e.g.
+                          // localhost:4000), not the frontend dev server, so
+                          // relative paths need the same prefix ProductImage
+                          // applies elsewhere — otherwise the browser requests
+                          // them from the wrong origin and they 404 silently.
+                          const imgSrc = rawUrl
+                            ? (rawUrl.startsWith("http") ? rawUrl : `${SERVER_ORIGIN}${rawUrl}`)
+                            : null;
+                          return (
+                            <tr key={p.id} onClick={() => pickResult(p)} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && pickResult(p)}>
+                              <td className="header-search-thumb">
+                                {imgSrc
+                                  ? <img src={imgSrc} alt="" />
+                                  : <div className="header-search-thumb-fallback" />}
+                              </td>
+                              <td className="header-search-info">
+                                <span className="header-search-name">{p.name}</span>
+                                <span className="header-search-brand">{p.brand}</span>
+                              </td>
+                              <td className="header-search-price">{peso(p.price)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <button type="button" className="header-search-viewall" onClick={viewAllResults}>
+                      View all {totalMatches} result{totalMatches === 1 ? "" : "s"} <ArrowRight size={13} />
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
+
           <button className={`icon-btn ${customer ? "signed-in" : ""}`} onClick={onAccountOpen} aria-label="Account">
             <User size={19} fill={customer ? "#C9A15F" : "none"} />
           </button>
           <button className="icon-btn" onClick={onWishlistOpen} aria-label="Wishlist">
             <Heart size={19} />
-            {wishCount > 0 && <span className="pill">{wishCount}</span>}
+            {wishCount > 0 && <span className="pill" key={wishCount}>{wishCount}</span>}
           </button>
           <button className="icon-btn" onClick={onCartOpen} aria-label="Cart">
             <ShoppingBag size={19} />
-            {cartCount > 0 && <span className="pill">{cartCount}</span>}
+            {cartCount > 0 && <span className="pill" key={cartCount}>{cartCount}</span>}
           </button>
         </div>
       </header>

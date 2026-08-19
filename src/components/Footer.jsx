@@ -3,7 +3,7 @@ import logo from "../assets/logo.jpg";
 import { FacebookIcon, InstagramIcon, TikTokIcon } from "./icons/BrandIcons";
 import * as api from "../api";
 
-export default function Footer({ goShop, setView, customer, onAccountOpen }) {
+export default function Footer({ goShop, setView, scrollToSection, customer, onAccountOpen }) {
   const [email, setEmail] = useState("");
   const [subscribed, setSubscribed] = useState(false);
   const [subError, setSubError] = useState("");
@@ -34,12 +34,7 @@ export default function Footer({ goShop, setView, customer, onAccountOpen }) {
   };
 
   const handleFaqClick = () => {
-    setView("support");
-    // Support page renders on the next tick, so wait a beat before
-    // scrolling to the FAQ section anchored at the bottom of it.
-    setTimeout(() => {
-      document.getElementById("faq")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 50);
+    scrollToSection("faq");
   };
 
   return (
@@ -73,7 +68,7 @@ export default function Footer({ goShop, setView, customer, onAccountOpen }) {
           <h5>Support</h5>
           <button onClick={handleFaqClick}>FAQs</button>
           <button onClick={handleTrackOrder}>Track order</button>
-          <button onClick={() => setView("support")}>Contact us</button>
+          <button onClick={() => scrollToSection("support-section")}>Contact us</button>
         </div>
         <div>
           <h5>Newsletter</h5>

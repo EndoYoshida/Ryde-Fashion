@@ -14,24 +14,70 @@
 /* header */
 .announce { background:var(--ink); color:var(--gold-light); text-align:center; font-size:11.5px; letter-spacing:0.5px; padding:7px 12px; }
 .site-header { display:flex; align-items:center; gap:20px; padding:16px 32px; background:var(--ivory); border-bottom:1px solid var(--beige); position:sticky; top:0; z-index:20; }
-.brand { display:flex; align-items:center; gap:8px; }
-.logo-img { width:38px; height:38px; object-fit:cover; border-radius:50%; }
+.brand { display:flex; align-items:center; gap:8px; transition:opacity .2s ease; }
+.brand:hover { opacity:0.82; }
+.brand:hover .logo-img { transform:rotate(-6deg) scale(1.06); }
+.logo-img { width:38px; height:38px; object-fit:cover; border-radius:50%; transition:transform .25s ease; }
 .logo-img.logo-hero { width:88px; height:88px; }
 .logo-img.logo-footer { width:32px; height:32px; }
 .brand-name { font-family:'Cormorant Garamond',serif; font-size:24px; letter-spacing:3px; font-weight:600; }
 .brand-sub { font-size:10px; color:var(--ink-soft); letter-spacing:0.5px; display:none; }
 .nav-links { display:flex; gap:28px; margin:0 auto; }
-.nav-link { font-size:14px; color:var(--ink-soft); padding:4px 0; border-bottom:1.5px solid transparent; }
-.nav-link.active, .nav-link:hover { color:var(--ink); border-color:var(--gold); }
+.nav-link { position:relative; font-size:14px; color:var(--ink-soft); padding:4px 0; border-bottom:1.5px solid transparent; transition:color .2s ease; }
+.nav-link::after { content:""; position:absolute; left:50%; right:50%; bottom:-1.5px; height:1.5px; background:var(--gold); transition:left .22s ease, right .22s ease; }
+.nav-link.active::after, .nav-link:hover::after { left:0; right:0; }
+.nav-link.active, .nav-link:hover { color:var(--ink); }
 .header-actions { display:flex; align-items:center; gap:10px; margin-left:auto; }
 .search-box { display:flex; align-items:center; gap:8px; background:var(--cream); border-radius:20px; padding:7px 14px; width:200px; }
 .search-box input { border:none; background:none; outline:none; font-size:13px; width:100%; color:var(--ink); }
-.icon-btn { position:relative; padding:8px; border-radius:50%; color:var(--ink); display:inline-flex; align-items:center; justify-content:center; text-decoration:none; }
-.icon-btn:hover { background:var(--cream); }
+.icon-btn { position:relative; padding:8px; border-radius:50%; color:var(--ink); display:inline-flex; align-items:center; justify-content:center; text-decoration:none; transition:background .2s ease, transform .15s ease; }
+.icon-btn:hover { background:var(--cream); transform:translateY(-1px); }
+.icon-btn:active { transform:scale(0.9); }
 .icon-btn.small { padding:7px; }
 .icon-btn.bordered { border:1px solid var(--beige); }
 .icon-btn.active { color:#C9678A; }
-.pill { position:absolute; top:-2px; right:-2px; background:var(--gold); color:#fff; font-size:9px; width:16px; height:16px; border-radius:50%; display:flex; align-items:center; justify-content:center; }
+.pill { position:absolute; top:-2px; right:-2px; background:var(--gold); color:#fff; font-size:9px; width:16px; height:16px; border-radius:50%; display:flex; align-items:center; justify-content:center; animation:pill-pop .3s cubic-bezier(.34,1.56,.64,1); }
+@keyframes pill-pop { 0% { transform:scale(0); } 70% { transform:scale(1.25); } 100% { transform:scale(1); } }
+
+/* header search: icon-only button that expands into an input + live results table */
+/* .header-search has a fixed footprint the size of the toggle button alone;
+   .header-search-expand is taken out of flow with position:absolute so its
+   width animation never resizes .header-search itself. Previously the expand
+   panel sat in normal flex flow with a negative margin-left to tuck it under
+   the icon — because a 0-width element with margin-left:-34px still eats
+   space in the flex layout, that shrank .header-search's own footprint and
+   made the next icon button (Account) render on top of the search icon. */
+.header-search { position:relative; display:flex; align-items:center; flex-shrink:0; z-index:1; }
+/* .icon-btn (Account/Wishlist/Cart) is also position:relative (for its badge
+   pill), so without an explicit z-index here the two sit in the same
+   stacking layer and paint in DOM order — meaning the expanded search panel
+   painted BELOW those icon buttons and they showed through on top of it.
+   Bumping .header-search above them while open fixes that. */
+.header-search.is-open { z-index:5; }
+.header-search-toggle { position:relative; z-index:2; flex-shrink:0; }
+.header-search.is-open .header-search-toggle { background:var(--cream); color:var(--gold); }
+.header-search-expand { position:absolute; right:0; top:50%; transform:translateY(-50%); display:flex; align-items:center; gap:6px; width:0; overflow:hidden; background:var(--cream); border-radius:20px; padding:0; opacity:0; pointer-events:none; transition:width .28s ease, opacity .2s ease, padding .28s ease; }
+.header-search.is-open .header-search-expand { width:230px; padding:7px 34px 7px 12px; opacity:1; pointer-events:auto; }
+.header-search-expand input { border:none; background:none; outline:none; font-size:13px; width:100%; color:var(--ink); }
+.header-search-clear { color:var(--ink-soft); flex-shrink:0; display:flex; padding:2px; border-radius:50%; transition:color .15s ease; }
+.header-search-clear:hover { color:var(--ink); }
+.header-search-results { position:absolute; top:calc(100% + 10px); right:0; width:340px; background:var(--ivory); border:1px solid var(--beige); border-radius:8px; box-shadow:0 12px 28px rgba(58,43,40,0.14); padding:8px; z-index:30; animation:search-drop .18s ease; }
+@keyframes search-drop { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+.header-search-empty { font-size:13px; color:var(--ink-soft); padding:14px 10px; margin:0; text-align:center; }
+.header-search-table { width:100%; border-collapse:collapse; }
+.header-search-table tr { cursor:pointer; transition:background .15s ease; border-radius:6px; }
+.header-search-table tr:hover, .header-search-table tr:focus { background:var(--cream); outline:none; }
+.header-search-table td { padding:7px 6px; vertical-align:middle; }
+.header-search-thumb { width:38px; }
+.header-search-thumb img { width:38px; height:38px; object-fit:cover; border-radius:6px; display:block; }
+.header-search-thumb-fallback { width:38px; height:38px; border-radius:6px; background:linear-gradient(160deg, var(--blush), var(--cream)); }
+.header-search-info { display:flex; flex-direction:column; gap:1px; }
+.header-search-name { font-size:13px; color:var(--ink); line-height:1.2; }
+.header-search-brand { font-size:11px; color:var(--ink-soft); }
+.header-search-price { font-size:12.5px; color:var(--gold); text-align:right; white-space:nowrap; }
+.header-search-viewall { display:flex; align-items:center; justify-content:center; gap:6px; width:100%; margin-top:4px; padding:9px; font-size:12px; letter-spacing:0.5px; color:var(--gold); border-top:1px solid var(--beige); transition:background .15s ease; }
+.header-search-viewall:hover { background:var(--cream); }
+
 .mobile-menu { display:none; }
 .mobile-only { display:none; }
 .desktop-only { display:flex; }
@@ -231,7 +277,18 @@
 .auth-switch button { color:var(--gold); font-weight:500; text-decoration:underline; }
 
 /* cart drawer */
-.cart-drawer { background:var(--ivory); width:100%; max-width:400px; height:100%; display:flex; flex-direction:column; padding:26px; }
+/* Scoped to .drawer-overlay (not plain .overlay) so this slide/fade
+   animation only applies to the Cart and Wishlist drawers — ProductDetail
+   and AuthModal reuse .overlay for a centered modal and shouldn't slide. */
+.drawer-overlay { animation: drawer-overlay-in .22s ease; }
+.drawer-overlay.closing { animation: drawer-overlay-out .28s ease forwards; }
+@keyframes drawer-overlay-in { from { opacity:0; } to { opacity:1; } }
+@keyframes drawer-overlay-out { from { opacity:1; } to { opacity:0; } }
+
+.cart-drawer { background:var(--ivory); width:100%; max-width:400px; height:100%; display:flex; flex-direction:column; padding:26px; animation: drawer-slide-in .3s cubic-bezier(.22,.9,.32,1); }
+.cart-drawer.closing { animation: drawer-slide-out .28s cubic-bezier(.55,0,.85,.35) forwards; }
+@keyframes drawer-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes drawer-slide-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
 .cart-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
 .cart-head h3 { display:flex; align-items:center; gap:8px; font-size:19px; }
 .cart-items { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:16px; }
@@ -282,8 +339,10 @@
   .filters { border-right:none; border-bottom:1px solid var(--beige); padding-right:0; padding-bottom:20px; margin-bottom:10px; display:flex; flex-wrap:wrap; gap:20px; }
   .desktop-only { display:none !important; }
   .mobile-only { display:flex !important; }
-  .mobile-menu { display:flex; flex-direction:column; background:var(--ivory); border-bottom:1px solid var(--beige); padding:10px 20px; }
-  .mobile-menu button { padding:10px 0; text-align:left; font-size:14px; border-bottom:1px solid var(--beige); }
+  .mobile-menu { display:flex; flex-direction:column; background:var(--ivory); border-bottom:1px solid var(--beige); padding:10px 20px; animation:mobile-menu-drop .2s ease; }
+  .mobile-menu button { padding:10px 0; text-align:left; font-size:14px; border-bottom:1px solid var(--beige); transition:padding-left .15s ease, color .15s ease; }
+  .mobile-menu button:hover { padding-left:6px; color:var(--gold); }
+  @keyframes mobile-menu-drop { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
   .hero h1 { font-size:30px; }
 }
 

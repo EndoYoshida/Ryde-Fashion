@@ -321,13 +321,25 @@ export default function App() {
     else setAuthOpen(true);
   };
 
+  // Browse and Support live as sections on the same scrollable home
+  // layout (like About), not as separate views — so getting to any of
+  // them means landing on "home" first (in case we're on a dedicated
+  // view like checkout/account) and then smooth-scrolling to the
+  // section once it's actually on the page.
+  const scrollToSection = (id) => {
+    setView("home");
+    setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+    }, 50);
+  };
+
   // Single entry point for "go to the shop" actions across the site.
   // Always explicitly sets category/tag filters (even to null) so a
   // previous filter never lingers when navigating from somewhere else.
   const goShop = (opts = {}) => {
     setCategoryFilter(opts.category ?? null);
     setTagFilter(opts.tag ?? null);
-    setView("browse");
+    scrollToSection("browse-section");
   };
 
   const addToCart = (p, qty = 1) => {
@@ -412,12 +424,13 @@ export default function App() {
       )}
 
       <Header
-        view={view} setView={setView} goShop={goShop}
+        view={view} setView={setView} goShop={goShop} scrollToSection={scrollToSection}
         cartCount={cartCount} wishCount={wishlist.size}
         onCartOpen={() => setCartOpen(true)} onWishlistOpen={() => setWishlistOpen(true)}
         onAccountOpen={handleAccountIconClick}
         customer={customer}
         search={search} setSearch={setSearch}
+        products={products} openProduct={setSelectedProduct}
       />
 
       {view === "home" && (
@@ -426,25 +439,23 @@ export default function App() {
           <About />
           <Categories goShop={goShop} products={products} />
           <FeaturedProducts products={products} openProduct={setSelectedProduct} toggleWish={toggleWish} wishlist={wishlist} addToCart={addToCart} goShop={goShop} />
+          <Browse
+            products={products}
+            openProduct={setSelectedProduct}
+            toggleWish={toggleWish}
+            wishlist={wishlist}
+            addToCart={addToCart}
+            search={search}
+            setSearch={setSearch}
+            categoryFilter={categoryFilter}
+            setCategoryFilter={setCategoryFilter}
+            tagFilter={tagFilter}
+            setTagFilter={setTagFilter}
+          />
           <Testimonials />
           <CTA goShop={goShop} />
+          <SupportPage customer={customer} />
         </>
-      )}
-
-      {view === "browse" && (
-        <Browse
-          products={products}
-          openProduct={setSelectedProduct}
-          toggleWish={toggleWish}
-          wishlist={wishlist}
-          addToCart={addToCart}
-          search={search}
-          setSearch={setSearch}
-          categoryFilter={categoryFilter}
-          setCategoryFilter={setCategoryFilter}
-          tagFilter={tagFilter}
-          setTagFilter={setTagFilter}
-        />
       )}
 
       {view === "checkout" && (
@@ -467,9 +478,7 @@ export default function App() {
         />
       )}
 
-      {view === "support" && <SupportPage customer={customer} />}
-
-      <Footer goShop={goShop} setView={setView} customer={customer} onAccountOpen={handleAccountIconClick} />
+      <Footer goShop={goShop} setView={setView} scrollToSection={scrollToSection} customer={customer} onAccountOpen={handleAccountIconClick} />
 
       <ProductDetail product={selectedProduct} onClose={() => setSelectedProduct(null)} addToCart={addToCart} toggleWish={toggleWish} wishlist={wishlist} products={products} openProduct={setSelectedProduct} customer={customer} rateProduct={rateProduct} />
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} cart={cart} updateQty={updateQty} removeItem={removeItem} setView={setView} />

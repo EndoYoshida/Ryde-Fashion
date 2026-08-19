@@ -2,14 +2,16 @@ import React from "react";
 import { Heart, X, ShoppingBag } from "lucide-react";
 import { peso, STATUS_LABEL } from "../data/products";
 import ProductImage from "./ui/ProductImage";
+import useMountOnTransition from "../hooks/useMountOnTransition";
 
 export default function WishlistDrawer({ open, onClose, wishlist, toggleWish, addToCart, openProduct, products }) {
   const items = products.filter((p) => wishlist.has(p.id));
 
-  if (!open) return null;
+  const { shouldRender, closing } = useMountOnTransition(open, 280);
+  if (!shouldRender) return null;
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="cart-drawer" onClick={(e) => e.stopPropagation()}>
+    <div className={`overlay drawer-overlay ${closing ? "closing" : ""}`} onClick={onClose}>
+      <div className={`cart-drawer ${closing ? "closing" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="cart-head">
           <h3><Heart size={18} /> Your Wishlist</h3>
           <button className="close-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
