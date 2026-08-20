@@ -4,6 +4,8 @@ import { sendEmailVerification, sendPasswordResetEmail } from "firebase/auth";
 import { peso } from "../data/products";
 import { auth } from "../firebaseConfig";
 import * as api from "../api";
+import SearchableSelect from "./ui/SearchableSelect";
+import { usePhAddressCascade } from "../hooks/usePhAddressCascade";
 
 const ORDER_STATUS_CLASS = {
   pending: "badge-soon", approved: "badge-ok", shipped: "badge-ok",
@@ -74,14 +76,27 @@ function ProfileTab({ customer, updateProfile, onGoToVerify }) {
     phoneCountryCode: customer.phoneCountryCode || "+63",
     phone: (customer.phone || "").replace(/\D/g, "").slice(0, 10),
     addressLine: customer.addressLine || "",
-    barangay: customer.barangay || "",
-    city: customer.city || "",
-    province: customer.province || "",
     zipCode: customer.zipCode || "",
   });
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // Province/City/Barangay cascade — the same one Checkout uses, so an
+  // address saved here resolves to the same real cities (e.g. all of
+  // Metro Manila, not just "City of Manila") and checkout can prefill
+  // straight from it.
+  const {
+    address, provinceOptions, cityOptions, barangayOptions,
+    loadingCities, loadingBarangays,
+    selectProvince, clearProvince, selectCity, clearCity, selectBarangay, clearBarangay,
+    hydrate: hydrateAddress,
+  } = usePhAddressCascade();
+
+  useEffect(() => {
+    hydrateAddress(customer.province, customer.city, customer.barangay);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
   // Country code: keep a leading "+", digits only after it, capped at 4
@@ -101,7 +116,12 @@ function ProfileTab({ customer, updateProfile, onGoToVerify }) {
     setBusy(true);
     setError("");
     try {
-      await updateProfile(form);
+      await updateProfile({
+        ...form,
+        province: address.province,
+        city: address.city,
+        barangay: address.barangay,
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -159,13 +179,35 @@ function ProfileTab({ customer, updateProfile, onGoToVerify }) {
         </label>
         <div className="form-row three">
           <label>Province
-            <input value={form.province} onChange={set("province")} placeholder="Province" />
+            <SearchableSelect
+              value={address.province}
+              options={provinceOptions}
+              onSelect={selectProvince}
+              onClear={clearProvince}
+              placeholder="Province"
+            />
           </label>
           <label>City
-            <input value={form.city} onChange={set("city")} placeholder="City" />
+            <SearchableSelect
+              value={address.city}
+              options={cityOptions}
+              onSelect={selectCity}
+              onClear={clearCity}
+              placeholder={address.provinceCode ? "City / Municipality" : "Select province first"}
+              disabled={!address.provinceCode}
+              loading={loadingCities}
+            />
           </label>
           <label>Barangay
-            <input value={form.barangay} onChange={set("barangay")} placeholder="Barangay" />
+            <SearchableSelect
+              value={address.barangay}
+              options={barangayOptions}
+              onSelect={selectBarangay}
+              onClear={clearBarangay}
+              placeholder={address.cityCode ? "Barangay" : "Select city first"}
+              disabled={!address.cityCode}
+              loading={loadingBarangays}
+            />
           </label>
         </div>
         <label>ZIP code

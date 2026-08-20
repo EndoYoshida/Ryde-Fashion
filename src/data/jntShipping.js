@@ -71,7 +71,16 @@ const PROVINCE_TO_ZONE = Object.fromEntries(
   PH_PROVINCES.flatMap(({ zone, provinces }) => provinces.map((p) => [p.toLowerCase(), zone]))
 );
 
-export function getZoneForProvince(province) {
+// City is checked first (and takes priority when both are given) because
+// Metro Manila isn't split into provinces in the real PSGC data the
+// checkout form now pulls from — its "provinces" are just oddly-named
+// district groupings, while the actual NCR city names ("Quezon City",
+// "Makati", etc.) are exactly what this zone table already keys on.
+export function getZoneForProvince(province, city) {
+  if (city) {
+    const cityZone = PROVINCE_TO_ZONE[city.trim().toLowerCase()];
+    if (cityZone) return cityZone;
+  }
   if (!province) return null;
   return PROVINCE_TO_ZONE[province.trim().toLowerCase()] || null;
 }
@@ -99,8 +108,8 @@ const OVER_10KG_STEP = { NCR: 40, Luzon: 60, Visayas: 70, Mindanao: 70, Island: 
 // fashion items like bags, apparel, and accessories.
 export const DEFAULT_ITEM_WEIGHT_KG = 0.3;
 
-export function calculateJntShipping(totalWeightKg, province) {
-  const zone = getZoneForProvince(province);
+export function calculateJntShipping(totalWeightKg, province, city) {
+  const zone = getZoneForProvince(province, city);
   if (!zone) return null; // unknown/unselected province — can't quote yet
 
   const weight = Math.max(totalWeightKg, 0.01);

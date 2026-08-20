@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Check, Upload, X } from "lucide-react";
 import { peso } from "../data/products";
-import { PH_PROVINCES, calculateJntShipping, DEFAULT_ITEM_WEIGHT_KG } from "../data/jntShipping";
+import { calculateJntShipping, DEFAULT_ITEM_WEIGHT_KG } from "../data/jntShipping";
 import * as api from "../api";
+import SearchableSelect from "./ui/SearchableSelect";
+import { usePhAddressCascade } from "../hooks/usePhAddressCascade";
 
 const PAYMENT_LABELS = {
   bdo: "Bank Transfer (BDO)",
@@ -60,10 +62,25 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
     phone: (customer?.phone || "").replace(/\D/g, "").slice(0, 10),
     email: customer?.email || "",
     addressLine: customer?.addressLine || "",
-    province: customer?.province || "", city: customer?.city || "", barangay: customer?.barangay || "",
     zip: customer?.zipCode || "", notes: "",
   });
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  // Province/City/Barangay cascade — shared with the Account profile form
+  // so both use the same real PSGC data (see usePhAddressCascade for the
+  // Metro Manila fix: it used to only ever offer "City of Manila" as the
+  // city, no matter which part of Metro Manila you actually wanted).
+  const {
+    address, provinceOptions, cityOptions, barangayOptions,
+    loadingCities, loadingBarangays,
+    selectProvince, clearProvince, selectCity, clearCity, selectBarangay, clearBarangay,
+    hydrate: hydrateAddress,
+  } = usePhAddressCascade();
+
+  useEffect(() => {
+    if (customer) hydrateAddress(customer.province, customer.city, customer.barangay);
+  }, [customer, hydrateAddress]);
+
   // Country code: keep a leading "+", digits only after it, capped at 4 digits.
   const setPhoneCountryCode = (e) => {
     const digits = e.target.value.replace(/\D/g, "").slice(0, 4);
@@ -91,26 +108,7 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
       phone: f.phone || (customer.phone || "").replace(/\D/g, "").slice(0, 10),
       email: f.email || customer.email || "",
       addressLine: f.addressLine || customer.addressLine || "",
-      province: f.province || customer.province || "",
-      city: f.city || customer.city || "",
-      barangay: f.barangay || customer.barangay || "",
       zip: f.zip || customer.zipCode || "",
-    }));
-  }, [customer]);
-
-  // On first render the customer's profile may not have finished loading
-  // yet (e.g. landing straight on /checkout after a refresh, while
-  // getMe() is still in flight) — the form above would then start blank.
-  // Once it arrives, fill in whichever of these fields the shopper
-  // hasn't already typed something into themselves.
-  useEffect(() => {
-    if (!customer) return;
-    setForm((f) => ({
-      ...f,
-      fullName: f.fullName || customer.name || "",
-      phone: f.phone || customer.phone || "",
-      email: f.email || customer.email || "",
-      address: f.address || customer.address || "",
     }));
   }, [customer]);
 
@@ -118,7 +116,7 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
   const totalWeightKg = cart.reduce((s, c) => s + (c.weight || DEFAULT_ITEM_WEIGHT_KG) * c.qty, 0);
   const freeShipping = subtotal > 5000 || subtotal === 0;
   // null shipping = free, or we don't have a province yet to quote against
-  const jntFee = freeShipping ? 0 : calculateJntShipping(totalWeightKg, form.province);
+  const jntFee = freeShipping ? 0 : calculateJntShipping(totalWeightKg, address.province, address.city);
   const shipping = jntFee ?? 0;
   const total = subtotal + shipping;
   const selectedPayment = PAYMENTS.find((p) => p.id === payment);
@@ -142,7 +140,7 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
       setError("Please fill in your name, phone, email, and address.");
       return;
     }
-    if (!form.province) {
+    if (!address.province) {
       setError("Please select your province so we can calculate your J&T shipping fee.");
       return;
     }
@@ -155,7 +153,7 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
     setError("");
     setProofWarning("");
     try {
-      const fullAddress = [form.addressLine, form.barangay, form.city, form.province, form.zip]
+      const fullAddress = [form.addressLine, address.barangay, address.city, address.province, form.zip]
         .filter(Boolean).join(", ");
       const order = await api.createOrder({
         id: makeOrderId(),
@@ -230,16 +228,31 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
           <input placeholder="Email address" value={form.email} onChange={set("email")} />
           <input placeholder="Shipping address" value={form.addressLine} onChange={set("addressLine")} />
           <div className="form-row three">
-            <select value={form.province} onChange={set("province")}>
-              <option value="">Province</option>
-              {PH_PROVINCES.map(({ group, provinces }) => (
-                <optgroup label={group} key={group}>
-                  {provinces.map((p) => <option key={p} value={p}>{p}</option>)}
-                </optgroup>
-              ))}
-            </select>
-            <input placeholder="City" value={form.city} onChange={set("city")} />
-            <input placeholder="Barangay" value={form.barangay} onChange={set("barangay")} />
+            <SearchableSelect
+              value={address.province}
+              options={provinceOptions}
+              onSelect={selectProvince}
+              onClear={clearProvince}
+              placeholder="Province"
+            />
+            <SearchableSelect
+              value={address.city}
+              options={cityOptions}
+              onSelect={selectCity}
+              onClear={clearCity}
+              placeholder={address.provinceCode ? "City / Municipality" : "Select province first"}
+              disabled={!address.provinceCode}
+              loading={loadingCities}
+            />
+            <SearchableSelect
+              value={address.barangay}
+              options={barangayOptions}
+              onSelect={selectBarangay}
+              onClear={clearBarangay}
+              placeholder={address.cityCode ? "Barangay" : "Select city first"}
+              disabled={!address.cityCode}
+              loading={loadingBarangays}
+            />
           </div>
           <input placeholder="ZIP code" value={form.zip} onChange={set("zip")} />
           <textarea placeholder="Order notes (optional)" rows={3} value={form.notes} onChange={set("notes")} />

@@ -1,10 +1,15 @@
 # Google Sheets → Products sync
 
 Lets you manage products in a Google Sheet (with photos in Google Drive)
-and have them automatically appear/update in the store. It's a **pull**
-sync: on a schedule, the server reads your Sheet and updates the local
-`products` table (the same one the admin dashboard and `/api/products`
-already use) — it doesn't touch the Sheet itself.
+and have them automatically appear/update in the store. It's mainly a
+**pull** sync: on a schedule, the server reads your Sheet and updates the
+local `products` table (the same one the admin dashboard and
+`/api/products` already use). The one exception is stock: right after a
+checkout, the server also pushes the item's new stock count *back* to its
+row in the Sheet (see "Stock write-back" below) — otherwise the next pull
+sync (including the one that runs at server startup, if
+`SHEETS_SYNC_ENABLED=true`) would overwrite the decrement with the
+Sheet's stale, pre-order number and sold items would look back in stock.
 
 ## 1. Set up a Google Cloud service account
 
@@ -30,10 +35,13 @@ and doesn't require enabling billing for read-only Sheets/Drive access.
 ## 2. Share your Sheet and Drive photos with the service account
 
 - Open your Google Sheet → **Share** → paste in the `client_email` from
-  above → give it **Viewer** access.
+  above → give it **Editor** access (not just Viewer — the stock
+  write-back described below needs to be able to update the sheet's
+  `stock` cells after a checkout, in addition to reading the rest of the
+  sheet).
 - If your product photos are in a Drive folder, share that folder with
-  the same email (Viewer access). Individual files work too, but a
-  shared folder is easier to maintain.
+  the same email (Viewer access is fine here — Drive is always read-only).
+  Individual files work too, but a shared folder is easier to maintain.
 
 ## 3. Set up the Sheet
 
@@ -154,8 +162,33 @@ npm run sync:sheet
   (`server/email.js`): new products email your newsletter subscribers,
   and restocking a product (going from out-of-stock/unavailable to
   available with stock > 0) emails anyone who has it wishlisted.
-- Never writes back to the Sheet — it's read-only from Sheets/Drive's
-  perspective.
+- The pull sync itself never writes back to the Sheet — it's read-only
+  from Sheets/Drive's perspective. The one write path is the checkout
+  stock write-back described next, which is separate from this pull sync.
+
+## Stock write-back
+
+Every checkout (`POST /api/orders`) decrements stock in the local
+database, same as always. For any item that came from the sheet sync
+(i.e. its product has a `sku`), it also writes the new stock number back
+to that same row's `stock` cell in the Sheet — and, if that order sold
+the last one, flips the row's `status` cell from `available` to
+`sold-out` too — so the Sheet and the database agree, and a later pull
+sync doesn't undo the sale or show it as available again.
+
+Notes:
+- This is fire-and-forget, same as the order receipt email — if it fails
+  (no Editor access yet, sheet briefly unreachable, sync not configured
+  at all) the order still goes through fine; you'll just see a
+  `didn't update sheet stock for sku="..."` warning in the server log,
+  and the next pull sync will re-overwrite that item's stock with
+  whatever's still in the Sheet.
+- Products created by hand in the admin dashboard have no `sku`, so
+  they're never written back to any sheet — same rule the pull sync's
+  deletion pass already follows.
+- Set `SHEETS_SYNC_WRITE_STOCK=false` in `server/.env` if you'd rather
+  keep this strictly one-way (pull-only, like before) — e.g. if you
+  intentionally don't want to grant the service account Editor access.
 
 ## Customizing category colors
 

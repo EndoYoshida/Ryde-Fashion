@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { db } from "../db/index.js";
 import { UPLOADS_DIR } from "../upload.js";
-import { getSheetsClient } from "./googleAuth.js";
+import { getSheetsClient, isSheetsSyncConfigured } from "./googleAuth.js";
 import { extractDriveFileId, downloadDriveImage } from "./driveImages.js";
 import { runSheetsSyncMigration } from "./migrate.js";
 import { rowToProduct, notifyWishlistersBackInStock, notifySubscribersNewProduct } from "../routes/products.js";
@@ -191,6 +191,92 @@ async function syncImagesForProduct(productId, imagesCell) {
     }
   }
   return { added, failed };
+}
+
+// Turns a 0-based column index into its Sheets letter (0 -> A, 25 -> Z,
+// 26 -> AA, ...) — needed to build an A1-notation cell reference for the
+// single-cell stock write below.
+function columnIndexToLetter(index) {
+  let letter = "";
+  let n = index + 1;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letter = String.fromCharCode(65 + rem) + letter;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letter;
+}
+
+// Pushes one product's updated stock (and, if it just sold out, status)
+// back into its row in the Sheet, right after a checkout decrements it
+// locally. Without this, the pull sync (on its schedule, or once at
+// server startup) would overwrite the DB's decremented stock — and its
+// "available" status — with the Sheet's stale, pre-order values, which
+// is why a restart could make sold-out items look available again.
+//
+// newStatus is optional — pass it (e.g. "sold-out") when the order that
+// just went through dropped this item's stock to 0, so the Sheet's
+// status column flips from "available" to "sold-out" (the site's actual
+// out-of-stock value — see STATUS_OPTIONS in src/data/products.js)
+// alongside the stock number, in the same request. Leave it out for a
+// partial decrement that didn't empty the stock.
+//
+// Best-effort and non-blocking by design: called fire-and-forget from
+// the order route, same as the receipt email. Any failure (sync not
+// configured, sku not found, no write access yet) is logged and
+// swallowed rather than surfaced to the shopper — a sheet write hiccup
+// should never be able to break checkout.
+//
+// Requires the service account to have Editor (not just Viewer) access
+// on the Sheet — see server/sync/README-SHEETS-SYNC.md.
+export async function writeStockToSheet(sku, newStock, newStatus) {
+  if (!sku) return { written: false, reason: "product has no sku (not sheet-managed)" };
+  if (!isSheetsSyncConfigured()) return { written: false, reason: "sheet sync not configured" };
+  if (process.env.SHEETS_SYNC_WRITE_STOCK === "false") return { written: false, reason: "writeback disabled" };
+
+  try {
+    const sheets = getSheetsClient();
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SHEETS_SYNC_SHEET_ID,
+      range: SHEET_RANGE,
+    });
+    const rows = res.data.values || [];
+    if (rows.length < 2) return { written: false, reason: "sheet is empty" };
+
+    const fieldMap = buildFieldMap(rows[0]);
+    if (fieldMap.stock == null) return { written: false, reason: 'sheet has no "stock" column' };
+    if (fieldMap.sku == null) return { written: false, reason: 'sheet has no "sku" column' };
+
+    const dataRows = rows.slice(1);
+    const rowIndex = dataRows.findIndex(
+      (row) => (row[fieldMap.sku] || "").toString().trim() === sku
+    );
+    if (rowIndex === -1) return { written: false, reason: `sku "${sku}" not found in sheet` };
+
+    const sheetRowNumber = rowIndex + 2; // +1 to skip the header row, +1 for 1-indexing
+    const data = [{
+      range: `${SHEET_RANGE}!${columnIndexToLetter(fieldMap.stock)}${sheetRowNumber}`,
+      values: [[newStock]],
+    }];
+    // Only touch the status cell if we were asked to AND the sheet
+    // actually has a status column — some sheets omit it and just rely
+    // on the "status defaults to available" behavior from setup step 3.
+    if (newStatus && fieldMap.status != null) {
+      data.push({
+        range: `${SHEET_RANGE}!${columnIndexToLetter(fieldMap.status)}${sheetRowNumber}`,
+        values: [[newStatus]],
+      });
+    }
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: process.env.SHEETS_SYNC_SHEET_ID,
+      requestBody: { valueInputOption: "RAW", data },
+    });
+    return { written: true };
+  } catch (err) {
+    console.error(`[sheets-sync] failed to write back stock for sku="${sku}":`, err.message);
+    return { written: false, reason: err.message };
+  }
 }
 
 // Deletes products whose sku was previously synced but no longer appears

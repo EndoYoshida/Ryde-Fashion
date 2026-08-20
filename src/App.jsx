@@ -387,17 +387,23 @@ export default function App() {
     scrollToId(id);
   };
 
+  // Caps at the product's stock no matter how it's called — clicking "Add
+  // to cart" again on something already in the cart, or opening the
+  // product detail modal a second time, both funnel through here, so this
+  // is the one place that needs to enforce the limit.
   const addToCart = (p, qty = 1) => {
     setCart((prev) => {
       const existing = prev.find((c) => c.id === p.id);
-      if (existing) return prev.map((c) => (c.id === p.id ? { ...c, qty: c.qty + qty } : c));
-      return [...prev, { ...p, qty }];
+      const cap = p.stock ?? Infinity;
+      const nextQty = Math.min((existing?.qty ?? 0) + qty, cap);
+      if (existing) return prev.map((c) => (c.id === p.id ? { ...c, qty: nextQty } : c));
+      return [...prev, { ...p, qty: nextQty }];
     });
     setCartOpen(true);
   };
   const updateQty = (id, qty) => {
     if (qty < 1) return;
-    setCart((prev) => prev.map((c) => (c.id === id ? { ...c, qty } : c)));
+    setCart((prev) => prev.map((c) => (c.id === id ? { ...c, qty: Math.min(qty, c.stock ?? Infinity) } : c)));
   };
   const removeItem = (id) => setCart((prev) => prev.filter((c) => c.id !== id));
   const clearCart = () => setCart([]);
@@ -530,7 +536,7 @@ export default function App() {
       <Footer goShop={goShop} setView={navigateTo} scrollToSection={scrollToSection} customer={customer} onAccountOpen={handleAccountIconClick} />
 
       <ProductDetail product={selectedProduct} onClose={() => setSelectedProduct(null)} addToCart={addToCart} toggleWish={toggleWish} wishlist={wishlist} products={products} openProduct={setSelectedProduct} customer={customer} rateProduct={rateProduct} />
-      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} cart={cart} updateQty={updateQty} removeItem={removeItem} setView={navigateTo} />
+      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} cart={cart} updateQty={updateQty} removeItem={removeItem} setView={navigateTo} customer={customer} />
       <WishlistDrawer open={wishlistOpen} onClose={() => setWishlistOpen(false)} wishlist={wishlist} toggleWish={toggleWish} addToCart={addToCart} openProduct={setSelectedProduct} products={products} />
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onAuthSuccess={handleAuthSuccess} />
     </div>

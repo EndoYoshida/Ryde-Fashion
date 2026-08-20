@@ -4,6 +4,7 @@ import { requireAdmin } from "../auth.js";
 import { upload } from "../upload.js";
 import { sendOrderReceiptEmail } from "../email.js";
 import { publicWriteLimiter } from "../rateLimit.js";
+import { writeStockToSheet } from "../sync/sheetsSync.js";
 
 const router = Router();
 
@@ -97,6 +98,7 @@ router.post("/", publicWriteLimiter, async (req, res) => {
   // Everything below happens atomically — either the whole order, all
   // its line items, and every stock decrement succeed together, or
   // none of it is written at all.
+  const stockUpdates = []; // { sku, newStock, newStatus } — for pushing back to the sheet after commit
   const placeOrder = db.transaction(() => {
     db.prepare(`
       INSERT INTO orders (id, customer_name, email, phone, address, payment_method, status, payment_status, total, date)
@@ -112,8 +114,13 @@ router.post("/", publicWriteLimiter, async (req, res) => {
       insertItem.run(id, product.id, product.name, qty, product.price);
 
       const newStock = Math.max(0, product.stock - qty);
-      const newStatus = newStock === 0 ? "sold-out" : product.status;
+      const soldOut = newStock === 0;
+      const newStatus = soldOut ? "sold-out" : product.status;
       updateStock.run(newStock, newStatus, product.id);
+      // Only pass a status along to the sheet when this order is what
+      // actually sold the last one — a partial decrement shouldn't touch
+      // the sheet's status cell (it's whatever the admin already set it to).
+      if (product.sku) stockUpdates.push({ sku: product.sku, newStock, newStatus: soldOut ? "sold-out" : null });
     }
   });
   placeOrder();
@@ -124,6 +131,20 @@ router.post("/", publicWriteLimiter, async (req, res) => {
   const receipt = await sendOrderReceiptEmail(order);
   if (!receipt.sent) {
     console.warn(`Order ${id} created, but receipt email wasn't sent: ${receipt.reason}`);
+  }
+
+  // Push the new stock count (and, if it just sold out, status) back to
+  // the Google Sheet for any item that came from the sheet sync (has a
+  // sku), so a later pull sync — e.g. the one that runs on server
+  // restart — doesn't overwrite this decrement with the sheet's stale,
+  // pre-order values. Fire-and-forget, same as the receipt email: a
+  // sheet write hiccup should never fail the order.
+  for (const { sku, newStock, newStatus } of stockUpdates) {
+    writeStockToSheet(sku, newStock, newStatus).then((result) => {
+      if (!result.written) {
+        console.warn(`Order ${id}: didn't update sheet stock for sku="${sku}": ${result.reason}`);
+      }
+    });
   }
 
   res.status(201).json(order);

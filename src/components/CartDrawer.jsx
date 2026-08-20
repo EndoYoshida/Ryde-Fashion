@@ -1,12 +1,28 @@
 import React from "react";
 import { ShoppingBag, X, Plus, Minus } from "lucide-react";
 import { peso } from "../data/products";
+import { calculateJntShipping, DEFAULT_ITEM_WEIGHT_KG } from "../data/jntShipping";
 import ProductImage from "./ui/ProductImage";
 import useMountOnTransition from "../hooks/useMountOnTransition";
 
-export default function CartDrawer({ open, onClose, cart, updateQty, removeItem, setView }) {
+export default function CartDrawer({ open, onClose, cart, updateQty, removeItem, setView, customer }) {
   const subtotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
-  const shipping = subtotal > 5000 || subtotal === 0 ? 0 : 250;
+  const totalWeightKg = cart.reduce((s, c) => s + (c.weight || DEFAULT_ITEM_WEIGHT_KG) * c.qty, 0);
+  const freeShipping = subtotal > 5000 || subtotal === 0;
+
+  // We don't have a delivery address yet at this point (that's chosen in
+  // checkout), so quote the real J&T fee for whichever province/city the
+  // shopper already has saved on their account, same as checkout would
+  // for that destination. If we don't know where they're shipping to yet
+  // (guest, or no saved address), fall back to the NCR-tier fee — the
+  // cheapest zone — labeled "from" so it reads as a starting estimate,
+  // not the exact figure checkout will land on for a farther zone.
+  const knownJntFee = !freeShipping
+    ? calculateJntShipping(totalWeightKg, customer?.province, customer?.city)
+    : null;
+  const fallbackJntFee = !freeShipping ? calculateJntShipping(totalWeightKg, "Metro Manila", "Manila") : null;
+  const hasKnownDestination = knownJntFee != null;
+  const shipping = freeShipping ? 0 : (knownJntFee ?? fallbackJntFee ?? 0);
   const total = subtotal + shipping;
 
   const { shouldRender, closing } = useMountOnTransition(open, 280);
@@ -31,7 +47,7 @@ export default function CartDrawer({ open, onClose, cart, updateQty, removeItem,
                   <div className="qty-stepper small">
                     <button onClick={() => updateQty(c.id, c.qty - 1)}><Minus size={12} /></button>
                     <span>{c.qty}</span>
-                    <button onClick={() => updateQty(c.id, c.qty + 1)}><Plus size={12} /></button>
+                    <button disabled={c.qty >= (c.stock ?? Infinity)} onClick={() => updateQty(c.id, c.qty + 1)}><Plus size={12} /></button>
                   </div>
                 </div>
                 <div className="cart-item-right">
@@ -48,7 +64,10 @@ export default function CartDrawer({ open, onClose, cart, updateQty, removeItem,
             <button className="btn-outline small">Apply</button>
           </div>
           <div className="totals-row"><span>Subtotal</span><span>{peso(subtotal)}</span></div>
-          <div className="totals-row"><span>Shipping</span><span>{shipping === 0 ? "Free" : peso(shipping)}</span></div>
+          <div className="totals-row">
+            <span>Shipping (J&amp;T Express)</span>
+            <span>{freeShipping ? "Free" : `${hasKnownDestination ? "" : "from "}${peso(shipping)}`}</span>
+          </div>
           <div className="totals-row total"><span>Estimated Total</span><span>{peso(total)}</span></div>
           <button className="btn-gold full" disabled={cart.length === 0} onClick={() => { onClose(); setView("checkout"); }}>
             Proceed to Checkout

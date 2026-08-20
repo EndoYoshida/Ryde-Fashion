@@ -1,12 +1,15 @@
 import { google } from "googleapis";
 import fs from "fs";
 
-// One service account, two scopes: read the product sheet, and read the
-// Drive files (product photos) it links to. Read-only scopes on purpose —
-// this process should never be able to modify your Sheet or Drive, only
-// your own product database.
+// One service account, two scopes: read/write the product sheet (the
+// pull sync still only *reads* it — the write scope is only ever used to
+// push a single stock number back after a checkout, see
+// sheetsSync.js#writeStockToSheet), and read the Drive files (product
+// photos) it links to. Drive stays read-only — this process never needs
+// to touch your photos, only your Sheet's stock column and your own
+// product database.
 const SCOPES = [
-  "https://www.googleapis.com/auth/spreadsheets.readonly",
+  "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/drive.readonly",
 ];
 

@@ -9,17 +9,22 @@ const MAX_RESULTS = 6;
 export default function Header({ view, setView, goShop, scrollToSection, cartCount, wishCount, onCartOpen, onWishlistOpen, onAccountOpen, customer, search, setSearch, products = [], openProduct }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  // Shop/About/Support all scroll to a section on the home view rather than
-  // switching to a dedicated view, so `view` alone can't tell us which nav
-  // item (if any) should be highlighted — it's just "home" for all of them.
-  // This tracks the intended highlight separately, and resets to "home"
-  // any time we leave the home view (checkout, account, etc.).
+  // Only "about" (an anchor within the home view) still needs its own
+  // tracked highlight — Shop and Support are now their own routed views,
+  // so their nav highlight tracks `view` directly. Checkout/account
+  // aren't in the nav at all, so they just fall back to "home" rather
+  // than leaving a stale highlight. When view stays "home" itself, this
+  // deliberately does nothing — that's what lets a manual "about" click
+  // (which keeps view at "home") stick instead of getting stomped right
+  // back to "home" by this effect.
   const [activeSection, setActiveSection] = useState("home");
   const searchWrapRef = useRef(null);
   const inputRef = useRef(null);
 
   useEffect(() => {
-    if (view !== "home") setActiveSection("home");
+    if (view === "shop") setActiveSection("browse");
+    else if (view === "support") setActiveSection("support");
+    else if (view !== "home") setActiveSection("home");
   }, [view]);
 
   const nav = [
