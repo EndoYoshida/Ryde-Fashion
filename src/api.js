@@ -40,8 +40,8 @@ async function request(path, options = {}, auth = null) {
 }
 
 /* ------------------------------- Admin auth ------------------------------ */
-export const loginAdmin = (username, password) =>
-  request("/admin/login", { method: "POST", body: JSON.stringify({ username, password }) });
+export const loginAdmin = (username, password, totpCode) =>
+  request("/admin/login", { method: "POST", body: JSON.stringify({ username, password, totpCode }) });
 export const logoutAdmin = () => request("/admin/logout", { method: "POST" }, "admin").catch(() => {});
 
 /* ------------------------------ Customer auth ----------------------------- */

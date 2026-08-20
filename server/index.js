@@ -35,6 +35,21 @@ const PORT = process.env.PORT || 4000;
 // (auth.js), lumping every visitor into one shared bucket.
 app.set("trust proxy", 1);
 
+// Render terminates TLS at its edge and already forces HTTPS for both
+// *.onrender.com and any custom domain added in its dashboard — so this
+// is redundant there today. It's here as defense-in-depth (and so this
+// still holds if the app is ever moved behind a different proxy that
+// doesn't force it): reject any request that reached this app over
+// plain HTTP, identified via the X-Forwarded-Proto header the proxy sets.
+if (process.env.NODE_ENV === "production") {
+  app.use((req, res, next) => {
+    if (req.headers["x-forwarded-proto"] === "http") {
+      return res.redirect(301, `https://${req.headers.host}${req.originalUrl}`);
+    }
+    next();
+  });
+}
+
 // Only the storefront's own origin may call this API. A malicious site
 // can't get a browser to make authenticated cross-origin requests here —
 // and even unauthenticated ones (like the public product list) are

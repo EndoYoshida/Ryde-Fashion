@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { db } from "./db/index.js";
 import { hashPassword, verifyPassword } from "./customerAuth.js";
+import { verifyTotp } from "./totp.js";
 
 // Admin credentials live in environment variables now, never in source —
 // see server/.env.example. ADMIN_PASSWORD_HASH is a salted hash (the same
@@ -9,11 +10,24 @@ import { hashPassword, verifyPassword } from "./customerAuth.js";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
 
+// Optional second factor. When set (via `node scripts/generate-totp-secret.js`),
+// a correct username/password alone isn't enough to log in — the request
+// also needs a valid 6-digit code from the admin's authenticator app.
+// Left unset, login behaves exactly as before (password-only) — this is
+// additive, not a breaking change to existing deployments.
+const ADMIN_TOTP_SECRET = process.env.ADMIN_TOTP_SECRET;
+
 if (!ADMIN_USERNAME || !ADMIN_PASSWORD_HASH) {
   console.error(
     "\n[FATAL] ADMIN_USERNAME and ADMIN_PASSWORD_HASH must be set in server/.env — " +
     "the admin dashboard has no login credentials configured.\n" +
     "Run: node scripts/hash-admin-password.js \"your password\"  to generate a hash.\n"
+  );
+}
+if (!ADMIN_TOTP_SECRET) {
+  console.warn(
+    "\n[warning] ADMIN_TOTP_SECRET is not set — admin login has no second factor. " +
+    "Run: node scripts/generate-totp-secret.js  to set up MFA.\n"
   );
 }
 
@@ -61,10 +75,28 @@ export async function login(req, res) {
     return res.status(429).json({ error: `Too many failed attempts. Try again in ${secondsLeft}s.` });
   }
 
-  const { username, password } = req.body || {};
+  const { username, password, totpCode } = req.body || {};
   const ok = safeEqual(username, ADMIN_USERNAME) && verifyPassword(password || "", ADMIN_PASSWORD_HASH);
 
   if (ok) {
+    // Password correct — if MFA is configured, that's only step one.
+    // No code yet: tell the client to prompt for it (this isn't counted
+    // as a failed attempt, since the password itself was right).
+    if (ADMIN_TOTP_SECRET && !totpCode) {
+      return res.json({ mfaRequired: true });
+    }
+    // Code provided (or required): verify it before issuing a session.
+    if (ADMIN_TOTP_SECRET && !verifyTotp(ADMIN_TOTP_SECRET, totpCode)) {
+      const nextCount = state.count + 1;
+      const nextState = { count: nextCount, lockedUntil: 0 };
+      if (nextCount >= MAX_ATTEMPTS) {
+        nextState.lockedUntil = Date.now() + LOCKOUT_MS;
+        nextState.count = 0;
+      }
+      attempts.set(ip, nextState);
+      return res.status(401).json({ error: "Invalid authentication code.", mfaRequired: true });
+    }
+
     attempts.delete(ip);
     const token = crypto.randomBytes(24).toString("hex");
     await db.prepare("INSERT INTO admin_sessions (token, expires_at) VALUES (?, ?)")

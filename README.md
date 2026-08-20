@@ -209,12 +209,15 @@ The backend includes:
 
 - Server-side authentication
 - Password hashing with `crypto.scrypt`
+- Optional MFA (TOTP) on the admin login — see `node scripts/generate-totp-secret.js`
 - Admin and customer session protection
 - CORS restrictions
 - Helmet security headers
 - API rate limiting
 - Server-side order and price validation
 - Customer data access restrictions
+- Parameterized SQL everywhere (no string-concatenated queries), so
+  standard SQL injection isn't possible against this codebase as-is
 
 ## Development Limitations
 
