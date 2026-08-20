@@ -6,6 +6,13 @@ import * as api from "../api";
 import SearchableSelect from "./ui/SearchableSelect";
 import { usePhAddressCascade } from "../hooks/usePhAddressCascade";
 
+// Set to false once a real payment gateway (PayMongo, etc.) is wired in —
+// this is the only line to flip. While true, checkout still works
+// end-to-end exactly as before (same GCash/bank details, same proof
+// upload), it just adds a visible warning so a client or tester doesn't
+// send real money before payments are actually automated.
+const DEMO_MODE = true;
+
 const PAYMENT_LABELS = {
   bdo: "Bank Transfer (BDO)",
   unionbank: "Bank Transfer (UnionBank)",
@@ -270,6 +277,11 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
           <textarea placeholder="Order notes (optional)" rows={3} value={form.notes} onChange={set("notes")} />
 
           <h4>Payment method</h4>
+          {DEMO_MODE && (
+            <p className="admin-form-error" style={{ marginBottom: 10 }}>
+              This site is currently a demo — please don&rsquo;t send real money via GCash or bank transfer. Choose Cash on Delivery to test checkout instead.
+            </p>
+          )}
           <div className="payment-grid">
             {PAYMENTS.map((p) => (
               <label key={p.id} className={`payment-option ${payment === p.id ? "active" : ""}`}>
@@ -282,6 +294,11 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
 
           {needsProof && (
             <div className="proof-upload">
+              {DEMO_MODE && (
+                <p className="admin-form-error" style={{ marginBottom: 10 }}>
+                  Demo mode: do not actually send money to the number above.
+                </p>
+              )}
               <p className="admin-field-hint" style={{ marginBottom: 10 }}>{selectedPayment.detail}</p>
               {proofPreview ? (
                 <div className="proof-preview">
