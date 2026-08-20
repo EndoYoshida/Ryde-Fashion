@@ -28,7 +28,10 @@ export const STATUS_OPTIONS = ["available", "sold-out", "coming-soon", "unavaila
 // here should be treated as seed/demo content.
 export const TESTIMONIALS = [];
 
-export const peso = (n) => `\u20b1${n.toLocaleString()}`;
+export const peso = (n) => {
+  const num = Number(n);
+  return `\u20b1${Number.isFinite(num) ? num.toLocaleString() : "0"}`;
+};
 
 export const STATUS_LABEL = {
   "available": { label: "Available", cls: "badge-ok" },

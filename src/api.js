@@ -56,6 +56,8 @@ export const getMe = () => request("/auth/me", {}, "customer");
 export const updateMe = (changes) =>
   request("/auth/me", { method: "PATCH", body: JSON.stringify(changes) }, "customer");
 export const getMyOrders = () => request("/auth/me/orders", {}, "customer");
+export const cancelMyOrder = (orderId) =>
+  request(`/orders/${orderId}/cancel`, { method: "PATCH" }, "customer");
 export const getMyTickets = () => request("/auth/me/tickets", {}, "customer");
 export const requestAccountDeletion = () =>
   request("/auth/delete-account/request", { method: "POST" }, "customer");

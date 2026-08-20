@@ -11,7 +11,7 @@ router.get("/", requireAdmin, asyncHandler(async (req, res) => {
     SELECT
       c.id, c.name, c.email, c.phone, c.joined, c.status,
       COUNT(o.id) AS orders,
-      COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total ELSE 0 END), 0) AS totalSpent
+      COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total ELSE 0 END), 0) AS "totalSpent"
     FROM customers c
     LEFT JOIN orders o ON o.email = c.email
     GROUP BY c.id

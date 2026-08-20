@@ -4,7 +4,30 @@ import { upload, cloudinaryUrl, deleteCloudinaryImage } from "../upload.js";
 import { requireAdmin } from "../auth.js";
 import { requireCustomer } from "../customerAuth.js";
 import { sendBackInStockEmail, sendNewProductEmail } from "../email.js";
+import { writeProductToSheet, clearProductRowInSheet } from "../sync/sheetsSync.js";
 import { asyncHandler } from "../asyncHandler.js";
+
+// Fire-and-forget push of a just-created/edited product into the Google
+// Sheet, mirroring the admin dashboard change there. If the product had
+// no sku yet, the sheet write assigns one — save that back onto the
+// product's row so future edits/deletes know which sheet row is theirs.
+// Best-effort, same contract as the stock/PO sheet writes elsewhere in
+// this app: a Sheets hiccup is logged, never surfaced as a failed save.
+function syncProductToSheet(product) {
+  writeProductToSheet(product).then(async (result) => {
+    if (!result.written) {
+      console.warn(`Product ${product.id}: didn't sync to sheet: ${result.reason}`);
+      return;
+    }
+    if (result.sku && result.sku !== product.sku) {
+      try {
+        await db.prepare("UPDATE products SET sku = ? WHERE id = ?").run(result.sku, product.id);
+      } catch (err) {
+        console.error(`Product ${product.id}: sheet write succeeded but saving its new sku failed:`, err.message);
+      }
+    }
+  });
+}
 
 const router = Router();
 
@@ -44,7 +67,7 @@ export async function rowToProduct(row) {
 }
 
 export async function recomputeRating(productId) {
-  const agg = await db.prepare("SELECT AVG(rating) AS avgRating, COUNT(*) AS count FROM product_ratings WHERE product_id = ?")
+  const agg = await db.prepare('SELECT AVG(rating) AS "avgRating", COUNT(*) AS count FROM product_ratings WHERE product_id = ?')
     .get(productId);
   const rating = agg.count > 0 ? Math.round(agg.avgRating * 10) / 10 : 0;
   await db.prepare("UPDATE products SET rating = ?, reviews = ? WHERE id = ?").run(rating, agg.count, productId);
@@ -106,6 +129,10 @@ router.post("/", requireAdmin, asyncHandler(async (req, res) => {
   // however many emails need to go out.
   notifySubscribersNewProduct(product);
 
+  // Mirror the new product into the Google Sheet too, so adding it in
+  // the admin dashboard shows up there as well as in the database.
+  syncProductToSheet({ ...product, sku: row.sku });
+
   res.status(201).json(product);
 }));
 
@@ -139,11 +166,15 @@ router.put("/:id", requireAdmin, asyncHandler(async (req, res) => {
     notifyWishlistersBackInStock(product);
   }
 
+  // Mirror the edit into the Google Sheet too.
+  syncProductToSheet({ ...product, sku: row.sku });
+
   res.json(product);
 }));
 
 // DELETE /api/products/:id
 router.delete("/:id", requireAdmin, asyncHandler(async (req, res) => {
+  const existing = await db.prepare("SELECT sku FROM products WHERE id = ?").get(req.params.id);
   const images = await db.prepare("SELECT filename FROM product_images WHERE product_id = ?").all(req.params.id);
   const result = await db.prepare("DELETE FROM products WHERE id = ?").run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: "Product not found" });
@@ -153,6 +184,17 @@ router.delete("/:id", requireAdmin, asyncHandler(async (req, res) => {
   for (const img of images) {
     deleteCloudinaryImage(img.filename);
   }
+
+  // Mirror the delete into the Google Sheet too — blank its row so a
+  // later pull sync doesn't resurrect it from the sheet's stale data.
+  if (existing?.sku) {
+    clearProductRowInSheet(existing.sku).then((sheetResult) => {
+      if (!sheetResult.written) {
+        console.warn(`Product ${req.params.id}: didn't clear sheet row: ${sheetResult.reason}`);
+      }
+    });
+  }
+
   res.status(204).end();
 }));
 

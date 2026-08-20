@@ -331,13 +331,37 @@ function PasswordTab({ customer }) {
   );
 }
 
+const CUSTOMER_CANCELLABLE_STATUSES = new Set(["pending", "approved"]);
+
 function OrdersTab() {
   const [orders, setOrders] = useState(null);
   const [error, setError] = useState("");
+  const [confirmingId, setConfirmingId] = useState(null);
+  const [cancellingId, setCancellingId] = useState(null);
+  const [cancelError, setCancelError] = useState("");
 
   useEffect(() => {
     api.getMyOrders().then(setOrders).catch((err) => setError(err.message || "Couldn't load your orders."));
   }, []);
+
+  const handleCancel = async (orderId) => {
+    if (confirmingId !== orderId) {
+      setConfirmingId(orderId);
+      setCancelError("");
+      return;
+    }
+    setCancellingId(orderId);
+    setCancelError("");
+    try {
+      const updated = await api.cancelMyOrder(orderId);
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
+    } catch (err) {
+      setCancelError(err.message || "Couldn't cancel this order. Please try again.");
+    } finally {
+      setCancellingId(null);
+      setConfirmingId(null);
+    }
+  };
 
   if (error) return <div className="account-panel"><p className="admin-form-error">{error}</p></div>;
   if (orders === null) return <div className="account-panel"><p className="admin-empty">Loading your orders...</p></div>;
@@ -349,6 +373,7 @@ function OrdersTab() {
     <div className="account-panel">
       <h4>Order history</h4>
       <p className="admin-field-hint" style={{ marginBottom: 14 }}>A receipt was also emailed to you for each order below.</p>
+      {cancelError && <p className="admin-form-error" style={{ marginBottom: 12 }}>{cancelError}</p>}
       <div className="admin-ticket-list">
         {orders.map((o) => (
           <div className="admin-ticket-card" key={o.id}>
@@ -365,6 +390,18 @@ function OrdersTab() {
               ))}
             </ul>
             <p className="admin-mini-sub" style={{ margin: 0 }}>Total: {peso(o.total)} &middot; Payment: {o.paymentStatus}</p>
+            {CUSTOMER_CANCELLABLE_STATUSES.has(o.status) && (
+              <button
+                type="button"
+                className="admin-link-btn danger"
+                style={{ marginTop: 10 }}
+                disabled={cancellingId === o.id}
+                onClick={() => handleCancel(o.id)}
+                onBlur={() => setConfirmingId((cur) => (cur === o.id ? null : cur))}
+              >
+                {cancellingId === o.id ? "Cancelling..." : confirmingId === o.id ? "Confirm cancel?" : "Cancel order"}
+              </button>
+            )}
           </div>
         ))}
       </div>

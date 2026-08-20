@@ -278,6 +278,136 @@ export async function writeStockToSheet(sku, newStock, newStatus) {
   }
 }
 
+// Fields (beyond stock/status, which writeStockToSheet above already
+// handles) that a full product write-back keeps in sync with the sheet.
+// "images" is deliberately excluded — that direction only ever flows
+// sheet -> DB (via syncImagesForProduct), so an admin-uploaded photo is
+// never pushed out to the sheet's Drive-link column.
+const WRITE_BACK_FIELDS = ["name", "brand", "category", "price", "oldPrice", "stock", "status", "description", "weight", "tag"];
+
+async function loadSheetHeaderAndRows() {
+  const sheets = getSheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.SHEETS_SYNC_SHEET_ID,
+    range: SHEET_RANGE,
+  });
+  const rows = res.data.values || [];
+  const fieldMap = rows.length ? buildFieldMap(rows[0]) : {};
+  return { sheets, headerRow: rows[0] || [], dataRows: rows.slice(1), fieldMap };
+}
+
+// Pushes one product's full field set into its sheet row — called after
+// an admin creates or edits a product in the dashboard, so the sheet
+// stays a mirror of the database instead of drifting out of sync.
+//
+// If the product has no sku yet (it was created by hand in the admin
+// dashboard, never synced from the sheet), this assigns one
+// ("ADM-<id>") and appends a brand-new row, so the product becomes
+// sheet-managed going forward. The caller is responsible for saving the
+// returned sku back onto the product's row in the database.
+//
+// Same best-effort, fire-and-forget contract as writeStockToSheet: a
+// sheet hiccup is logged and swallowed, never surfaced to the admin as
+// a failed save.
+export async function writeProductToSheet(product) {
+  if (!isSheetsSyncConfigured()) return { written: false, reason: "sheet sync not configured" };
+
+  try {
+    const { headerRow, dataRows, fieldMap } = await loadSheetHeaderAndRows();
+    if (fieldMap.sku == null) return { written: false, reason: 'sheet has no "sku" column' };
+
+    const values = {
+      name: product.name,
+      brand: product.brand,
+      category: product.category,
+      price: product.price,
+      oldPrice: product.oldPrice ?? "",
+      stock: product.stock,
+      status: product.status,
+      description: product.description ?? "",
+      weight: product.weight,
+      tag: product.tag ?? "",
+    };
+
+    const rowIndex = product.sku
+      ? dataRows.findIndex((row) => (row[fieldMap.sku] || "").toString().trim() === product.sku)
+      : -1;
+
+    if (rowIndex !== -1) {
+      // Existing sheet row for this sku — update each mapped column in place.
+      const sheetRowNumber = rowIndex + 2;
+      const data = [];
+      for (const field of WRITE_BACK_FIELDS) {
+        if (fieldMap[field] == null) continue;
+        data.push({
+          range: `${SHEET_RANGE}!${columnIndexToLetter(fieldMap[field])}${sheetRowNumber}`,
+          values: [[values[field]]],
+        });
+      }
+      if (data.length === 0) return { written: false, reason: "sheet has no matching columns to update" };
+
+      const sheets = getSheetsClient();
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: process.env.SHEETS_SYNC_SHEET_ID,
+        requestBody: { valueInputOption: "RAW", data },
+      });
+      return { written: true, sku: product.sku };
+    }
+
+    // No matching row (new product, or a sku that's no longer in the
+    // sheet) — append a fresh one. Assign a sku if this product doesn't
+    // have one yet, so it's identifiable on future edits/deletes.
+    const sku = product.sku || `ADM-${product.id}`;
+    const newRow = new Array(headerRow.length).fill("");
+    newRow[fieldMap.sku] = sku;
+    for (const field of WRITE_BACK_FIELDS) {
+      if (fieldMap[field] != null) newRow[fieldMap[field]] = values[field];
+    }
+
+    const sheets = getSheetsClient();
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.SHEETS_SYNC_SHEET_ID,
+      range: SHEET_RANGE,
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [newRow] },
+    });
+    return { written: true, sku, appended: true };
+  } catch (err) {
+    console.error(`[sheets-sync] failed to write product "${product.sku || product.id}" to sheet:`, err.message);
+    return { written: false, reason: err.message };
+  }
+}
+
+// Blanks out a product's row in the sheet after it's deleted from the
+// admin dashboard, rather than physically removing the row (which would
+// need the sheet's numeric internal id and would shift every row below
+// it). A blanked row is already treated as empty by fetchRows() above,
+// so it won't be re-created as a "new" product on the next pull sync.
+export async function clearProductRowInSheet(sku) {
+  if (!sku) return { written: false, reason: "product has no sku (not sheet-managed)" };
+  if (!isSheetsSyncConfigured()) return { written: false, reason: "sheet sync not configured" };
+
+  try {
+    const { dataRows, fieldMap } = await loadSheetHeaderAndRows();
+    if (fieldMap.sku == null) return { written: false, reason: 'sheet has no "sku" column' };
+
+    const rowIndex = dataRows.findIndex((row) => (row[fieldMap.sku] || "").toString().trim() === sku);
+    if (rowIndex === -1) return { written: false, reason: `sku "${sku}" not found in sheet` };
+
+    const sheetRowNumber = rowIndex + 2;
+    const sheets = getSheetsClient();
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: process.env.SHEETS_SYNC_SHEET_ID,
+      range: `${SHEET_RANGE}!A${sheetRowNumber}:Z${sheetRowNumber}`,
+    });
+    return { written: true };
+  } catch (err) {
+    console.error(`[sheets-sync] failed to clear sheet row for sku="${sku}":`, err.message);
+    return { written: false, reason: err.message };
+  }
+}
+
 // Deletes products whose sku was previously synced but no longer appears
 // in the sheet. Only ever touches rows that HAVE a sku — anything created
 // by hand in the admin dashboard (sku is NULL there) is never a candidate,

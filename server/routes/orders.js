@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { requireAdmin } from "../auth.js";
+import { requireCustomer } from "../customerAuth.js";
 import { upload, cloudinaryUrl } from "../upload.js";
 import { sendOrderReceiptEmail } from "../email.js";
 import { publicWriteLimiter } from "../rateLimit.js";
@@ -198,6 +199,73 @@ router.patch("/:id/payment-status", requireAdmin, asyncHandler(async (req, res) 
     if (!r.written) console.warn(`Order ${order.id}: didn't update sheet payment status: ${r.reason}`);
   });
   res.json(order);
+}));
+
+// PATCH /api/orders/:id/cancel  (customer-only — lets a customer cancel
+// their own order while there's still time to think it over, i.e.
+// before J&T has actually picked it up. "shipped" is the point a
+// courier has the parcel, so cancellation is only allowed from
+// "pending" or "approved" — once it's shipped/delivered/already
+// cancelled, this is refused.
+const CUSTOMER_CANCELLABLE_STATUSES = new Set(["pending", "approved"]);
+router.patch("/:id/cancel", requireCustomer, asyncHandler(async (req, res) => {
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!order || order.email !== req.customer.email) {
+    return res.status(404).json({ error: "Order not found" });
+  }
+  if (!CUSTOMER_CANCELLABLE_STATUSES.has(order.status)) {
+    return res.status(409).json({
+      error: order.status === "cancelled"
+        ? "This order is already cancelled."
+        : "This order can no longer be cancelled — it's already on its way.",
+    });
+  }
+
+  const items = await db.prepare("SELECT product_id, qty FROM order_items WHERE order_id = ?").all(req.params.id);
+  const stockUpdates = []; // pushed back to the sheet after commit, same pattern as checkout
+
+  // Cancelling and restocking every item happens atomically — either the
+  // whole thing succeeds or none of it does. Uses tx.prepare (bound to
+  // the transaction's own connection), not the outer db.prepare — see
+  // db/index.js's transaction() for why.
+  const cancelOrder = db.transaction(async (tx) => {
+    await tx.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ?").run(req.params.id);
+
+    for (const { product_id, qty } of items) {
+      if (!product_id) continue; // product may have since been deleted
+      const product = await tx.prepare("SELECT * FROM products WHERE id = ?").get(product_id);
+      if (!product) continue;
+
+      const wasSoldOut = product.status === "sold-out";
+      const newStock = product.stock + qty;
+      // Only flip the product back to "available" if this cancellation
+      // is what pushed stock back above zero — if an admin separately
+      // marked it unavailable for another reason, don't override that.
+      const newStatus = wasSoldOut && newStock > 0 ? "available" : product.status;
+      await tx.prepare("UPDATE products SET stock = ?, status = ? WHERE id = ?").run(newStock, newStatus, product_id);
+      if (product.sku) {
+        stockUpdates.push({ sku: product.sku, newStock, newStatus: newStatus !== product.status ? newStatus : null });
+      }
+    }
+  });
+  await cancelOrder();
+
+  const updated = await getOrderWithItems(req.params.id);
+
+  // Same fire-and-forget sheet write-backs as checkout/admin status
+  // changes — a Sheets hiccup should never fail the cancellation itself.
+  for (const { sku, newStock, newStatus } of stockUpdates) {
+    writeStockToSheet(sku, newStock, newStatus).then((result) => {
+      if (!result.written) {
+        console.warn(`Order ${req.params.id} cancel: didn't update sheet stock for sku="${sku}": ${result.reason}`);
+      }
+    });
+  }
+  updateOrderStatusInSheet(updated).then((r) => {
+    if (!r.written) console.warn(`Order ${updated.id}: didn't update sheet status: ${r.reason}`);
+  });
+
+  res.json(updated);
 }));
 
 export default router;
