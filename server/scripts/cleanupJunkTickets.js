@@ -21,7 +21,7 @@ import { db } from "../db/index.js";
 
 const shouldDelete = process.argv.includes("--delete");
 
-const junkTickets = db.prepare(`
+const junkTickets = await db.prepare(`
   SELECT t.id, t.customer_name, t.email, t.subject, t.date
   FROM tickets t
   WHERE t.message_id IS NOT NULL
@@ -46,6 +46,6 @@ if (!shouldDelete) {
 } else {
   const ids = junkTickets.map((t) => t.id);
   const placeholders = ids.map(() => "?").join(",");
-  const result = db.prepare(`DELETE FROM tickets WHERE id IN (${placeholders})`).run(...ids);
+  const result = await db.prepare(`DELETE FROM tickets WHERE id IN (${placeholders})`).run(...ids);
   console.log(`\nDeleted ${result.changes} junk ticket(s).`);
 }

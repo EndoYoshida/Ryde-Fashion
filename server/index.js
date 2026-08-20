@@ -6,8 +6,8 @@ import helmet from "helmet";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import "./db/index.js"; // ensures the SQLite file exists + is seeded on first run
-import { UPLOADS_DIR } from "./upload.js";
+import "./db/index.js"; // connects to Postgres + ensures schema is up to date
+import { asyncHandler } from "./asyncHandler.js";
 import { login, logout } from "./auth.js";
 import { isFirebaseConfigured } from "./firebaseAdmin.js";
 import { pollInbox, isEmailConfigured } from "./email.js";
@@ -50,7 +50,9 @@ app.use(helmet({
 }));
 app.use(cors({ origin: ALLOWED_ORIGIN }));
 app.use(express.json({ limit: "1mb" }));
-app.use("/uploads", express.static(UPLOADS_DIR));
+// Product/proof images are now served directly from Cloudinary's own CDN
+// URLs (see upload.js) rather than from this server, since Render's disk
+// is ephemeral — no local /uploads static route needed anymore.
 // Serves static assets referenced by outgoing emails (e.g. the logo) at an
 // absolute URL — email clients can't load relative paths, so templates in
 // emailTemplates.js build the full URL from APP_ORIGIN below.
@@ -59,8 +61,8 @@ app.use("/api", generalLimiter);
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
-app.post("/api/admin/login", authLimiter, login);
-app.post("/api/admin/logout", logout);
+app.post("/api/admin/login", authLimiter, asyncHandler(login));
+app.post("/api/admin/logout", asyncHandler(logout));
 app.use("/api/auth", authLimiter, authRouter);
 
 app.use("/api/products", productsRouter);
@@ -86,4 +88,13 @@ app.listen(PORT, () => {
   }
   startSheetsSyncScheduler();
   startBestsellerScheduler();
+});
+
+// Catches errors passed via next(err) from asyncHandler-wrapped routes
+// (including rejected Postgres queries) so a DB error returns a clean 500
+// instead of hanging the request or crashing the process.
+app.use((err, req, res, next) => {
+  console.error(err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: "Something went wrong on our end. Please try again." });
 });

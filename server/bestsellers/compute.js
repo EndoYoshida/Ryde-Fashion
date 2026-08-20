@@ -1,7 +1,4 @@
 import { db } from "../db/index.js";
-import { runBestsellersMigration } from "./migrate.js";
-
-runBestsellersMigration();
 
 // How many products get flagged as bestsellers.
 const TOP_N = Number(process.env.BESTSELLER_COUNT) || 8;
@@ -16,33 +13,33 @@ const WINDOW_DAYS = Number(process.env.BESTSELLER_WINDOW_DAYS) || 90;
 // a quiet store from getting labeled a "bestseller".
 const MIN_QTY = Number(process.env.BESTSELLER_MIN_QTY) || 3;
 
-// A sale only counts if the order was actually paid and not cancelled.
-// Pending/unpaid/failed orders don't reflect real demand yet.
+// o.date is stored as a 'YYYY-MM-DD' TEXT column, so a plain string
+// comparison against another 'YYYY-MM-DD' string sorts correctly — no
+// need to cast either side to a real date type.
 const SALES_QUERY = `
-  SELECT oi.product_id AS productId, SUM(oi.qty) AS totalQty
+  SELECT oi.product_id AS "productId", SUM(oi.qty) AS "totalQty"
   FROM order_items oi
   JOIN orders o ON o.id = oi.order_id
   WHERE o.payment_status = 'paid'
     AND o.status != 'cancelled'
     AND oi.product_id IS NOT NULL
-    ${WINDOW_DAYS > 0 ? `AND o.date >= date('now', '-${WINDOW_DAYS} days')` : ""}
+    ${WINDOW_DAYS > 0 ? `AND o.date >= to_char(now() - interval '${WINDOW_DAYS} days', 'YYYY-MM-DD')` : ""}
   GROUP BY oi.product_id
-  HAVING totalQty >= ?
-  ORDER BY totalQty DESC
+  HAVING SUM(oi.qty) >= ?
+  ORDER BY "totalQty" DESC
   LIMIT ?
 `;
 
-export function computeBestsellers() {
-  const top = db.prepare(SALES_QUERY).all(MIN_QTY, TOP_N);
+export async function computeBestsellers() {
+  const top = await db.prepare(SALES_QUERY).all(MIN_QTY, TOP_N);
 
-  const clearAll = db.prepare("UPDATE products SET auto_bestseller = 0 WHERE auto_bestseller != 0");
-  const setOne = db.prepare("UPDATE products SET auto_bestseller = 1 WHERE id = ?");
-
-  const applyAll = db.transaction((rows) => {
-    clearAll.run();
-    for (const row of rows) setOne.run(row.productId);
+  const applyAll = db.transaction(async (tx, rows) => {
+    await tx.prepare("UPDATE products SET auto_bestseller = 0 WHERE auto_bestseller != 0").run();
+    for (const row of rows) {
+      await tx.prepare("UPDATE products SET auto_bestseller = 1 WHERE id = ?").run(row.productId);
+    }
   });
-  applyAll(top);
+  await applyAll(top);
 
   console.log(
     `[bestsellers] recomputed — ${top.length} product(s) flagged ` +

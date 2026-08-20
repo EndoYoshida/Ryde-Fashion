@@ -48,7 +48,7 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-export function login(req, res) {
+export async function login(req, res) {
   if (!ADMIN_USERNAME || !ADMIN_PASSWORD_HASH) {
     return res.status(500).json({ error: "Admin login isn't configured on the server." });
   }
@@ -67,7 +67,7 @@ export function login(req, res) {
   if (ok) {
     attempts.delete(ip);
     const token = crypto.randomBytes(24).toString("hex");
-    db.prepare("INSERT INTO admin_sessions (token, expires_at) VALUES (?, ?)")
+    await db.prepare("INSERT INTO admin_sessions (token, expires_at) VALUES (?, ?)")
       .run(token, Date.now() + SESSION_TTL_MS);
     return res.json({ token, expiresIn: SESSION_TTL_MS });
   }
@@ -88,9 +88,9 @@ export function login(req, res) {
   });
 }
 
-export function logout(req, res) {
+export async function logout(req, res) {
   const token = getToken(req);
-  if (token) db.prepare("DELETE FROM admin_sessions WHERE token = ?").run(token);
+  if (token) await db.prepare("DELETE FROM admin_sessions WHERE token = ?").run(token);
   res.status(204).end();
 }
 
@@ -99,19 +99,23 @@ function getToken(req) {
   return header.startsWith("Bearer ") ? header.slice(7) : null;
 }
 
-export function requireAdmin(req, res, next) {
-  const token = getToken(req);
-  const session = token && db.prepare("SELECT * FROM admin_sessions WHERE token = ?").get(token);
+export async function requireAdmin(req, res, next) {
+  try {
+    const token = getToken(req);
+    const session = token && await db.prepare("SELECT * FROM admin_sessions WHERE token = ?").get(token);
 
-  if (!session || session.expires_at < Date.now()) {
-    if (token) db.prepare("DELETE FROM admin_sessions WHERE token = ?").run(token);
-    return res.status(401).json({ error: "Not authenticated. Please log in again." });
+    if (!session || session.expires_at < Date.now()) {
+      if (token) await db.prepare("DELETE FROM admin_sessions WHERE token = ?").run(token);
+      return res.status(401).json({ error: "Not authenticated. Please log in again." });
+    }
+
+    // Sliding expiry: any authenticated request extends the session.
+    await db.prepare("UPDATE admin_sessions SET expires_at = ? WHERE token = ?")
+      .run(Date.now() + SESSION_TTL_MS, token);
+    next();
+  } catch (err) {
+    next(err);
   }
-
-  // Sliding expiry: any authenticated request extends the session.
-  db.prepare("UPDATE admin_sessions SET expires_at = ? WHERE token = ?")
-    .run(Date.now() + SESSION_TTL_MS, token);
-  next();
 }
 
 // Re-exported so scripts/hash-admin-password.js doesn't need to know

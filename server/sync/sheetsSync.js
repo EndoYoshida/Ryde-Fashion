@@ -1,13 +1,8 @@
-import fs from "fs";
-import path from "path";
 import { db } from "../db/index.js";
-import { UPLOADS_DIR } from "../upload.js";
+import { deleteCloudinaryImage } from "../upload.js";
 import { getSheetsClient, isSheetsSyncConfigured } from "./googleAuth.js";
 import { extractDriveFileId, downloadDriveImage } from "./driveImages.js";
-import { runSheetsSyncMigration } from "./migrate.js";
 import { rowToProduct, notifyWishlistersBackInStock, notifySubscribersNewProduct } from "../routes/products.js";
-
-runSheetsSyncMigration();
 
 // Sheet tab + range to read. Override via env if your tab isn't named
 // "Products" or you want to cap how many rows get scanned.
@@ -106,7 +101,7 @@ async function fetchRows() {
 // "was this out of stock and is it now available" — kept in sync with
 // that route intentionally, since a sheet-driven restock should notify
 // wishlisters exactly the same way an admin-driven restock does.
-function upsertProduct(record) {
+async function upsertProduct(record) {
   if (!record.sku) {
     return { skipped: true, reason: "missing sku" };
   }
@@ -120,7 +115,7 @@ function upsertProduct(record) {
   const price = toIntOrNull(record.price);
   if (price === null) return { skipped: true, reason: "invalid price" };
 
-  const existing = db.prepare("SELECT * FROM products WHERE sku = ?").get(record.sku);
+  const existing = await db.prepare("SELECT * FROM products WHERE sku = ?").get(record.sku);
   const wasOutOfStock = existing ? (existing.status !== "available" || existing.stock <= 0) : false;
 
   const values = {
@@ -138,7 +133,7 @@ function upsertProduct(record) {
 
   let productId;
   if (existing) {
-    db.prepare(`
+    await db.prepare(`
       UPDATE products SET name=?, brand=?, category=?, price=?, old_price=?, stock=?, status=?, tag=?, description=?, weight=?
       WHERE id=?
     `).run(
@@ -148,19 +143,23 @@ function upsertProduct(record) {
     );
     productId = existing.id;
   } else {
-    const result = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO products (sku, name, brand, category, price, old_price, stock, status, tag, description, weight, rating, reviews)
-      VALUES (@sku, @name, @brand, @category, @price, @old_price, @stock, @status, @tag, @description, @weight, 0, 0)
-    `).run({ sku: record.sku, ...values });
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+      RETURNING id
+    `).run(
+      record.sku, values.name, values.brand, values.category, values.price, values.old_price,
+      values.stock, values.status, values.tag, values.description, values.weight,
+    );
     productId = result.lastInsertRowid;
   }
 
   return { skipped: false, productId, created: !existing, wasOutOfStock };
 }
 
-function hasDriveImage(productId, driveFileId) {
+async function hasDriveImage(productId, driveFileId) {
   return Boolean(
-    db.prepare("SELECT id FROM product_images WHERE product_id = ? AND drive_file_id = ?")
+    await db.prepare("SELECT id FROM product_images WHERE product_id = ? AND drive_file_id = ?")
       .get(productId, driveFileId)
   );
 }
@@ -174,14 +173,14 @@ async function syncImagesForProduct(productId, imagesCell) {
 
   let added = 0;
   let failed = 0;
-  const maxOrderRow = db.prepare("SELECT COALESCE(MAX(sort_order), -1) AS m FROM product_images WHERE product_id = ?").get(productId);
+  const maxOrderRow = await db.prepare("SELECT COALESCE(MAX(sort_order), -1) AS m FROM product_images WHERE product_id = ?").get(productId);
   let nextOrder = maxOrderRow.m + 1;
 
   for (const fileId of fileIds) {
-    if (hasDriveImage(productId, fileId)) continue; // already synced, skip re-download
+    if (await hasDriveImage(productId, fileId)) continue; // already synced, skip re-download
     try {
       const filename = await downloadDriveImage(fileId);
-      db.prepare(
+      await db.prepare(
         "INSERT INTO product_images (product_id, filename, sort_order, drive_file_id) VALUES (?, ?, ?, ?)"
       ).run(productId, filename, nextOrder++, fileId);
       added++;
@@ -283,16 +282,16 @@ export async function writeStockToSheet(sku, newStock, newStatus) {
 // in the sheet. Only ever touches rows that HAVE a sku — anything created
 // by hand in the admin dashboard (sku is NULL there) is never a candidate,
 // so this can't accidentally wipe out manually-added products.
-function deleteMissingSkus(seenSkus) {
-  const allSynced = db.prepare("SELECT id, sku FROM products WHERE sku IS NOT NULL").all();
+async function deleteMissingSkus(seenSkus) {
+  const allSynced = await db.prepare("SELECT id, sku FROM products WHERE sku IS NOT NULL").all();
   const toDelete = allSynced.filter((p) => !seenSkus.has(p.sku));
 
   let deleted = 0;
   for (const { id } of toDelete) {
-    const images = db.prepare("SELECT filename FROM product_images WHERE product_id = ?").all(id);
-    db.prepare("DELETE FROM products WHERE id = ?").run(id); // product_images cascades
+    const images = await db.prepare("SELECT filename FROM product_images WHERE product_id = ?").all(id);
+    await db.prepare("DELETE FROM products WHERE id = ?").run(id); // product_images cascades
     for (const { filename } of images) {
-      fs.unlink(path.join(UPLOADS_DIR, filename), () => {});
+      deleteCloudinaryImage(filename);
     }
     deleted++;
   }
@@ -315,7 +314,7 @@ export async function runSheetsSync() {
 
   for (const record of records) {
     try {
-      const result = upsertProduct(record);
+      const result = await upsertProduct(record);
       if (result.skipped) {
         summary.skipped++;
         summary.errors.push(`Row for sku="${record.sku || "?"}" skipped: ${result.reason}`);
@@ -332,8 +331,8 @@ export async function runSheetsSync() {
       // Same notification behavior as the admin dashboard's create/update
       // routes (see routes/products.js) — fire-and-forget, each recipient's
       // send is individually try/caught inside these functions already.
-      const row = db.prepare("SELECT * FROM products WHERE id = ?").get(result.productId);
-      const product = rowToProduct(row);
+      const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(result.productId);
+      const product = await rowToProduct(row);
       if (result.created) {
         notifySubscribersNewProduct(product);
       } else {
@@ -356,7 +355,7 @@ export async function runSheetsSync() {
   // wipe out every synced product — this guard prevents that.
   const deletionsEnabled = process.env.SHEETS_SYNC_DELETE_MISSING !== "false";
   if (deletionsEnabled && seenSkus.size > 0) {
-    summary.deleted = deleteMissingSkus(seenSkus);
+    summary.deleted = await deleteMissingSkus(seenSkus);
   } else if (deletionsEnabled && seenSkus.size === 0) {
     summary.errors.push("Skipped deletion pass: no valid rows synced this run (safety guard).");
   }

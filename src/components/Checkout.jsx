@@ -40,10 +40,22 @@ const PAYMENTS = [
   },
 ];
 
+// The suffix isn't just cosmetic: POST /api/orders/:id/proof (uploading a
+// payment screenshot) is unauthenticated and only guarded by knowing the
+// exact order id, so it needs to be unguessable, not just unique. A
+// 3-digit Math.random() suffix (900 values/day) is brute-forceable in
+// seconds; crypto.getRandomValues over a 7-character base36 string gives
+// 36^7 (~78 billion) possibilities instead, and is a CSPRNG rather than
+// Math.random()'s predictable PRNG.
 function makeOrderId() {
   const d = new Date();
   const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-  const suffix = Math.floor(100 + Math.random() * 900);
+  const bytes = new Uint8Array(10);
+  window.crypto.getRandomValues(bytes);
+  const suffix = Array.from(bytes, (b) => (b % 36).toString(36))
+    .join("")
+    .slice(0, 7)
+    .toUpperCase();
   return `RYDE-${stamp}-${suffix}`;
 }
 

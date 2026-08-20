@@ -11,16 +11,12 @@ export function startBestsellerScheduler() {
   const intervalMs = hours * 60 * 60 * 1000;
 
   console.log(`[bestsellers] scheduler enabled — recomputing every ${hours} hour(s).`);
-  try {
-    computeBestsellers(); // once at startup
-  } catch (err) {
+  computeBestsellers().catch((err) => { // once at startup
     console.error("[bestsellers] initial computation failed:", err);
-  }
+  });
   setInterval(() => {
-    try {
-      computeBestsellers();
-    } catch (err) {
+    computeBestsellers().catch((err) => {
       console.error("[bestsellers] scheduled computation failed:", err);
-    }
+    });
   }, intervalMs);
 }

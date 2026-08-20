@@ -1,4 +1,4 @@
-import crypto from "crypto";
+import crypto, { randomInt } from "crypto";
 import { db } from "./db/index.js";
 
 // --- Password hashing (Node's built-in crypto, no native deps needed) ---
@@ -20,7 +20,7 @@ export function verifyPassword(password, stored) {
 }
 
 // --- Sessions (separate namespace from admin sessions in server/auth.js) ---
-// Persisted in SQLite rather than kept in memory, so an active customer
+// Persisted in Postgres rather than kept in memory, so an active customer
 // stays signed in across server restarts (deploys, crashes, `--watch`
 // reloads during development) instead of being logged out every time.
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — customers expect to stay signed in
@@ -30,37 +30,41 @@ function getToken(req) {
   return header.startsWith("Bearer ") ? header.slice(7) : null;
 }
 
-export function issueSession(customerId) {
+export async function issueSession(customerId) {
   const token = crypto.randomBytes(24).toString("hex");
-  db.prepare("INSERT INTO customer_sessions (token, customer_id, expires_at) VALUES (?, ?, ?)")
+  await db.prepare("INSERT INTO customer_sessions (token, customer_id, expires_at) VALUES (?, ?, ?)")
     .run(token, customerId, Date.now() + SESSION_TTL_MS);
   return token;
 }
 
-export function endSession(token) {
-  if (token) db.prepare("DELETE FROM customer_sessions WHERE token = ?").run(token);
+export async function endSession(token) {
+  if (token) await db.prepare("DELETE FROM customer_sessions WHERE token = ?").run(token);
 }
 
-export function requireCustomer(req, res, next) {
-  const token = getToken(req);
-  const session = token && db.prepare("SELECT * FROM customer_sessions WHERE token = ?").get(token);
+export async function requireCustomer(req, res, next) {
+  try {
+    const token = getToken(req);
+    const session = token && await db.prepare("SELECT * FROM customer_sessions WHERE token = ?").get(token);
 
-  if (!session || session.expires_at < Date.now()) {
-    if (token) db.prepare("DELETE FROM customer_sessions WHERE token = ?").run(token);
-    return res.status(401).json({ error: "Not signed in. Please log in again." });
+    if (!session || session.expires_at < Date.now()) {
+      if (token) await db.prepare("DELETE FROM customer_sessions WHERE token = ?").run(token);
+      return res.status(401).json({ error: "Not signed in. Please log in again." });
+    }
+
+    const customer = await db.prepare("SELECT * FROM customers WHERE id = ?").get(session.customer_id);
+    if (!customer || customer.status === "suspended" || customer.status === "deleted") {
+      await db.prepare("DELETE FROM customer_sessions WHERE token = ?").run(token);
+      return res.status(401).json({ error: "This account is no longer active." });
+    }
+
+    // Sliding expiry: any authenticated request extends the session.
+    await db.prepare("UPDATE customer_sessions SET expires_at = ? WHERE token = ?")
+      .run(Date.now() + SESSION_TTL_MS, token);
+    req.customer = customer;
+    next();
+  } catch (err) {
+    next(err);
   }
-
-  const customer = db.prepare("SELECT * FROM customers WHERE id = ?").get(session.customer_id);
-  if (!customer || customer.status === "suspended" || customer.status === "deleted") {
-    db.prepare("DELETE FROM customer_sessions WHERE token = ?").run(token);
-    return res.status(401).json({ error: "This account is no longer active." });
-  }
-
-  // Sliding expiry: any authenticated request extends the session.
-  db.prepare("UPDATE customer_sessions SET expires_at = ? WHERE token = ?")
-    .run(Date.now() + SESSION_TTL_MS, token);
-  req.customer = customer;
-  next();
 }
 
 export function publicCustomer(row) {
@@ -86,7 +90,10 @@ export function publicCustomer(row) {
 
 export function generateVerificationCode() {
   // 6-digit numeric code, easy to type from an email on any device.
-  return String(Math.floor(100000 + Math.random() * 900000));
+  // crypto.randomInt (not Math.random) since this gates account deletion —
+  // Math.random() is a predictable PRNG, not meant for anything
+  // security-sensitive even when the output space looks large.
+  return String(randomInt(100000, 1000000));
 }
 
 // Shared expiry window for both email-verification codes and

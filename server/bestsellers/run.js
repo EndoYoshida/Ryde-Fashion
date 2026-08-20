@@ -4,7 +4,7 @@ import "dotenv/config";
 import { computeBestsellers } from "./compute.js";
 
 try {
-  computeBestsellers();
+  await computeBestsellers();
   process.exit(0);
 } catch (err) {
   console.error("[bestsellers] failed:", err);

@@ -10,7 +10,7 @@
     "compute:bestsellers": "node bestsellers/run.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
+    "cloudinary": "^2.5.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
@@ -21,6 +21,8 @@
     "imapflow": "^1.0.171",
     "mailparser": "^3.7.1",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.9.15"
+    "multer-storage-cloudinary-v2": "^1.0.3",
+    "nodemailer": "^6.9.15",
+    "pg": "^8.13.1"
   }
 }

@@ -1,7 +1,16 @@
--- Ryde Fashion database schema (SQLite)
+-- Ryde Fashion database schema (PostgreSQL)
+-- Converted from the original SQLite schema. Notes on conversion choices:
+--  * INTEGER PRIMARY KEY AUTOINCREMENT -> SERIAL PRIMARY KEY
+--  * 0/1 "boolean" INTEGER columns kept as INTEGER (not BOOLEAN) so the
+--    existing app code (which compares to 0/1) doesn't need to change.
+--  * TEXT timestamp columns keep DEFAULT-ing to an ISO-ish string via
+--    to_char(now(), ...) instead of switching to TIMESTAMPTZ, so existing
+--    code that treats created_at/date as strings keeps working unchanged.
+--  * expires_at is BIGINT (epoch milliseconds) instead of INTEGER, since
+--    Postgres INTEGER is 32-bit and would overflow.
 
 CREATE TABLE IF NOT EXISTS products (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   brand TEXT NOT NULL,
   category TEXT NOT NULL,
@@ -14,28 +23,15 @@ CREATE TABLE IF NOT EXISTS products (
   rating REAL NOT NULL DEFAULT 0,
   reviews INTEGER NOT NULL DEFAULT 0,
   tag TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  sku TEXT,
+  auto_bestseller INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
 );
 
-CREATE TABLE IF NOT EXISTS product_ratings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (product_id, customer_id)
-);
-
-CREATE TABLE IF NOT EXISTS product_images (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  filename TEXT NOT NULL,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_sku ON products(sku) WHERE sku IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS customers (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   username TEXT UNIQUE,
   email TEXT NOT NULL UNIQUE,
@@ -45,8 +41,35 @@ CREATE TABLE IF NOT EXISTS customers (
   email_verified INTEGER NOT NULL DEFAULT 0,
   verification_code TEXT,
   verification_code_expires_at TEXT,
-  joined TEXT NOT NULL DEFAULT (date('now')),
+  address_line TEXT,
+  barangay TEXT,
+  city TEXT,
+  province TEXT,
+  zip_code TEXT,
+  phone_country_code TEXT,
+  firebase_uid TEXT,
+  joined TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD'),
   status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_firebase_uid ON customers(firebase_uid) WHERE firebase_uid IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS product_ratings (
+  id SERIAL PRIMARY KEY,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  created_at TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+  UNIQUE (product_id, customer_id)
+);
+
+CREATE TABLE IF NOT EXISTS product_images (
+  id SERIAL PRIMARY KEY,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  drive_file_id TEXT,
+  created_at TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -61,11 +84,11 @@ CREATE TABLE IF NOT EXISTS orders (
   status TEXT NOT NULL DEFAULT 'pending',
   payment_status TEXT NOT NULL DEFAULT 'pending',
   total INTEGER NOT NULL DEFAULT 0,
-  date TEXT NOT NULL DEFAULT (date('now'))
+  date TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD')
 );
 
 CREATE TABLE IF NOT EXISTS order_items (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
   product_id INTEGER REFERENCES products(id),
   name TEXT NOT NULL,
@@ -81,26 +104,26 @@ CREATE TABLE IF NOT EXISTS tickets (
   message TEXT NOT NULL,
   message_id TEXT,
   status TEXT NOT NULL DEFAULT 'open',
-  date TEXT NOT NULL DEFAULT (date('now'))
+  date TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD')
+);
+
+CREATE TABLE IF NOT EXISTS ticket_replies (
+  id SERIAL PRIMARY KEY,
+  ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  email_sent INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
 );
 
 CREATE TABLE IF NOT EXISTS customer_sessions (
   token TEXT PRIMARY KEY,
   customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-  expires_at INTEGER NOT NULL
+  expires_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS admin_sessions (
   token TEXT PRIMARY KEY,
-  expires_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS ticket_replies (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
-  body TEXT NOT NULL,
-  email_sent INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  expires_at BIGINT NOT NULL
 );
 
 -- Newsletter subscribers. Not tied to a customer account — anyone can
@@ -108,19 +131,19 @@ CREATE TABLE IF NOT EXISTS ticket_replies (
 -- kept as a flag rather than deleting the row, so re-subscribing with
 -- the same address doesn't fight the UNIQUE constraint.
 CREATE TABLE IF NOT EXISTS newsletter_subscribers (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   unsubscribed INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
 );
 
 -- A signed-in customer's saved wishlist, persisted server-side (rather
 -- than only in browser state) so it survives across devices/sessions and
 -- so we know who to email when a wishlisted item is back in stock.
 CREATE TABLE IF NOT EXISTS wishlist_items (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
   product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
   UNIQUE (customer_id, product_id)
 );

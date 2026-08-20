@@ -218,17 +218,17 @@ export async function pollInbox() {
         const messageId = parsed.messageId || `${uid}-${Date.now()}`;
         const fromEmail = (parsed.from?.value?.[0]?.address || "").toLowerCase();
 
-        const existing = db.prepare("SELECT id FROM tickets WHERE message_id = ?").get(messageId);
-        const isRegisteredCustomer = fromEmail && db.prepare("SELECT id FROM customers WHERE email = ?").get(fromEmail);
+        const existing = await db.prepare("SELECT id FROM tickets WHERE message_id = ?").get(messageId);
+        const isRegisteredCustomer = fromEmail && await db.prepare("SELECT id FROM customers WHERE email = ?").get(fromEmail);
 
         if (!existing && isRegisteredCustomer) {
           const fromName = parsed.from?.value?.[0]?.name || fromEmail.split("@")[0];
           const subject = parsed.subject || "(no subject)";
           const body = (parsed.text || "").trim().slice(0, 5000) || "(empty message)";
 
-          db.prepare(`
+          await db.prepare(`
             INSERT INTO tickets (id, customer_name, email, subject, message, message_id, status, date)
-            VALUES (?, ?, ?, ?, ?, ?, 'open', date('now'))
+            VALUES (?, ?, ?, ?, ?, ?, 'open', to_char(now(), 'YYYY-MM-DD'))
           `).run(makeTicketId(), fromName, fromEmail, subject, body, messageId);
 
           console.log(`New support ticket created from email: ${subject} (${fromEmail})`);

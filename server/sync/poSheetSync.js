@@ -58,8 +58,8 @@ function registerRowValues(order) {
 // looks them up from the product they came from, same as the reference
 // PO template's "Brand / Model" / "Category" columns. Falls back to
 // blank if the product was since deleted.
-function itemRows(order) {
-  const items = db.prepare(`
+async function itemRows(order) {
+  const items = await db.prepare(`
     SELECT oi.name, oi.qty, oi.price, p.brand, p.category
     FROM order_items oi
     LEFT JOIN products p ON p.id = oi.product_id
@@ -136,7 +136,7 @@ export async function pushOrderToSheet(order) {
       requestBody: { values: [registerRowValues(order)] },
     });
 
-    const rows = itemRows(order);
+    const rows = await itemRows(order);
     if (rows.length > 0) {
       await sheets.spreadsheets.values.append({
         spreadsheetId: process.env.SHEETS_SYNC_SHEET_ID,

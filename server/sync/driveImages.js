@@ -1,16 +1,9 @@
-import fs from "fs";
-import path from "path";
 import { getDriveClient } from "./googleAuth.js";
-import { UPLOADS_DIR } from "../upload.js";
+import { cloudinary } from "../upload.js";
 
 // Same allowlist as upload.js — a synced image should be held to the same
 // standard as one an admin uploads by hand through the dashboard.
-const ALLOWED_MIME_TYPES = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/webp": ".webp",
-  "image/gif": ".gif",
-};
+const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 // Accepts either a bare Drive file ID (e.g. "1AbC...") or a full share
 // link (e.g. "https://drive.google.com/file/d/1AbC.../view") and returns
@@ -25,33 +18,39 @@ export function extractDriveFileId(value) {
   return null;
 }
 
-// Downloads a Drive file's bytes to server/uploads/, named so re-syncing
-// the same row is idempotent (see hasDriveImage in sheetsSync.js, which
-// checks this exact filename pattern before calling this at all).
+// Streams a Drive file's bytes straight into Cloudinary (no local disk
+// involved — Render's disk is ephemeral, so writing here first and
+// uploading second would just be a slower way to lose the file on the
+// next deploy). Named so re-syncing the same row is idempotent (see
+// hasDriveImage in sheetsSync.js, which checks this exact public_id
+// pattern before calling this at all).
 export async function downloadDriveImage(fileId) {
   const drive = getDriveClient();
 
   const meta = await drive.files.get({ fileId, fields: "mimeType, name" });
-  const ext = ALLOWED_MIME_TYPES[meta.data.mimeType];
-  if (!ext) {
+  if (!ALLOWED_MIME_TYPES.has(meta.data.mimeType)) {
     throw new Error(`Drive file ${fileId} (${meta.data.name}) is ${meta.data.mimeType}, not an allowed image type`);
   }
-
-  const filename = `drive-${fileId}${ext}`;
-  const destPath = path.join(UPLOADS_DIR, filename);
 
   const response = await drive.files.get(
     { fileId, alt: "media" },
     { responseType: "stream" }
   );
 
+  const publicId = `ryde-storefront/drive-${fileId}`;
   await new Promise((resolve, reject) => {
-    const dest = fs.createWriteStream(destPath);
-    response.data.pipe(dest);
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { public_id: publicId, overwrite: true },
+      (err, result) => (err ? reject(err) : resolve(result))
+    );
+    response.data.pipe(uploadStream);
     response.data.on("error", reject);
-    dest.on("error", reject);
-    dest.on("finish", resolve);
+    uploadStream.on("error", reject);
   });
 
-  return filename;
+  // Returned value is stored in product_images.filename, same as a
+  // dashboard-uploaded image's Cloudinary public_id — no "ryde-storefront/"
+  // folder prefix needed there since cloudinary.url() takes the full
+  // public_id including folder, so store it as-is.
+  return publicId;
 }
