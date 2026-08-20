@@ -4,8 +4,8 @@ import {
   issueSession, endSession, requireCustomer, publicCustomer,
   generateVerificationCode, codeExpiryTimestamp, isCodeExpired,
 } from "../customerAuth.js";
-import { verifyFirebaseToken } from "../firebaseAdmin.js";
-import { sendDeletionConfirmationEmail } from "../email.js";
+import { verifyFirebaseToken, generateVerificationLink, generatePasswordResetLink } from "../firebaseAdmin.js";
+import { sendDeletionConfirmationEmail, sendCustomerVerificationLinkEmail, sendCustomerPasswordResetEmail } from "../email.js";
 
 const router = Router();
 
@@ -86,6 +86,64 @@ router.post("/firebase", async (req, res) => {
 
   const token = issueSession(customer.id);
   res.json({ token, customer: publicCustomer(customer) });
+});
+
+// POST /api/auth/send-verification-email
+// Replaces the frontend's direct call to Firebase's sendEmailVerification()
+// so the email can go out in our own branded template instead of
+// Firebase's default one. No session required — this runs right after
+// signup, before the frontend has finished exchanging its Firebase token
+// for a local session, same as the old client-side call didn't need one
+// either. Rate-limited the same way the rest of /api/auth is (see index.js).
+router.post("/send-verification-email", async (req, res) => {
+  const email = req.body?.email?.trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: "Email is required." });
+
+  try {
+    const link = await generateVerificationLink(email);
+    const result = await sendCustomerVerificationLinkEmail(email, link);
+    if (!result.sent) {
+      return res.status(502).json({ error: `Couldn't send the verification email: ${result.reason}` });
+    }
+    res.json({ sent: true });
+  } catch (err) {
+    if (err.code === "auth/email-not-found" || err.code === "auth/user-not-found") {
+      return res.status(404).json({ error: "No account found with that email." });
+    }
+    if (err.code === "auth/email-already-verified") {
+      return res.status(400).json({ error: "That email is already verified." });
+    }
+    console.error("Failed to generate verification link:", err.message);
+    res.status(502).json({ error: "Couldn't send the verification email. Please try again." });
+  }
+});
+
+// POST /api/auth/send-password-reset
+// Replaces the frontend's direct call to Firebase's sendPasswordResetEmail()
+// — same reasoning as above. Public/unauthenticated, matching how a
+// "forgot password" flow always has to work (the person isn't signed in).
+router.post("/send-password-reset", async (req, res) => {
+  const email = req.body?.email?.trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: "Email is required." });
+
+  try {
+    const link = await generatePasswordResetLink(email);
+    const result = await sendCustomerPasswordResetEmail(email, link);
+    if (!result.sent) {
+      return res.status(502).json({ error: `Couldn't send the reset email: ${result.reason}` });
+    }
+    res.json({ sent: true });
+  } catch (err) {
+    if (err.code === "auth/email-not-found" || err.code === "auth/user-not-found") {
+      // Same behavior the old client-side sendPasswordResetEmail() had —
+      // this does confirm whether an email is registered. Keeping parity
+      // rather than silently pretending it sent, since the frontend's
+      // existing error handling already expects a real error here.
+      return res.status(404).json({ error: "No account found with that email." });
+    }
+    console.error("Failed to generate password reset link:", err.message);
+    res.status(502).json({ error: "Couldn't send the reset email. Please try again." });
+  }
 });
 
 // POST /api/auth/logout

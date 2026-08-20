@@ -11,6 +11,8 @@ import {
   newsletterWelcomeHtml,
   backInStockHtml,
   newProductHtml,
+  accountVerificationLinkHtml,
+  passwordResetLinkHtml,
 } from "./emailTemplates.js";
 
 const EMAIL_USER = process.env.EMAIL_USER;
@@ -83,6 +85,30 @@ export async function sendDeletionConfirmationEmail(to, code) {
     subject: "Confirm account deletion — Ryde Fashion",
     text: `We received a request to permanently delete your Ryde Fashion account.\n\nYour confirmation code is: ${code}\n\nEnter this code to confirm. This code expires in 30 minutes.\n\nIf you didn't request this, ignore this email and your account will remain exactly as it is — nothing happens without the code.`,
     html: deletionEmailHtml(code),
+  });
+}
+
+// Sends the Firebase-generated verification link inside our own branded
+// template, instead of letting Firebase email it with its own default
+// (unbrandable) template. The link itself is still 100% Firebase's —
+// see server/firebaseAdmin.js#generateVerificationLink.
+export async function sendCustomerVerificationLinkEmail(to, link) {
+  return sendEmail({
+    to,
+    subject: "Verify your email — Ryde Fashion",
+    text: `Welcome to Ryde Fashion!\n\nVerify your email address by opening this link:\n${link}\n\nIf you didn't create this account, you can ignore this email.`,
+    html: accountVerificationLinkHtml(link),
+  });
+}
+
+// Sends the Firebase-generated password-reset link inside our own
+// branded template — see server/firebaseAdmin.js#generatePasswordResetLink.
+export async function sendCustomerPasswordResetEmail(to, link) {
+  return sendEmail({
+    to,
+    subject: "Reset your password — Ryde Fashion",
+    text: `We received a request to reset your Ryde Fashion password.\n\nReset it by opening this link:\n${link}\n\nIf you didn't request this, you can ignore this email — your password won't change.`,
+    html: passwordResetLinkHtml(link),
   });
 }
 

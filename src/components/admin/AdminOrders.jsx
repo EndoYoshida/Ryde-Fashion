@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { peso } from "../../data/products";
 import { ORDER_STATUS_OPTIONS, PAYMENT_STATUS_OPTIONS } from "../../data/orders";
 import { SERVER_ORIGIN } from "../../api";
+import { openPurchaseOrder } from "../../utils/purchaseOrder";
 
 const STATUS_CLASS = {
   pending: "badge-soon", approved: "badge-ok", shipped: "badge-ok",
@@ -60,9 +61,12 @@ export default function AdminOrders({ orders, updateOrderStatus, updatePaymentSt
                       {ORDER_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </td>
-                  <td>
+                  <td className="admin-table-actions">
                     <button className="admin-link-btn" onClick={() => setExpanded(expanded === o.id ? null : o.id)}>
                       {expanded === o.id ? "Hide" : "View"}
+                    </button>
+                    <button className="admin-link-btn" onClick={() => openPurchaseOrder(o)}>
+                      Download PO
                     </button>
                   </td>
                 </tr>
@@ -72,11 +76,26 @@ export default function AdminOrders({ orders, updateOrderStatus, updatePaymentSt
                       <div className="admin-order-detail">
                         <div>
                           <strong>Items</strong>
-                          <ul>
-                            {o.items.map((it, i) => (
-                              <li key={i}>{it.name} &times; {it.qty} — {peso(it.price * it.qty)}</li>
-                            ))}
-                          </ul>
+                          <table className="admin-po-items-table">
+                            <thead>
+                              <tr>
+                                <th>Item</th>
+                                <th>Qty</th>
+                                <th>Unit price</th>
+                                <th>Line total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {o.items.map((it, i) => (
+                                <tr key={i}>
+                                  <td>{it.name}</td>
+                                  <td>{it.qty}</td>
+                                  <td>{peso(it.price)}</td>
+                                  <td>{peso(it.price * it.qty)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                         <div>
                           <strong>Shipping</strong>

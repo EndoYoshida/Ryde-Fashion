@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import { User, Mail, Phone, MapPin, Lock, LogOut, Package, Check, ShieldCheck, Headphones, AlertTriangle, Trash2 } from "lucide-react";
-import { sendEmailVerification, sendPasswordResetEmail } from "firebase/auth";
 import { peso } from "../data/products";
 import { auth } from "../firebaseConfig";
 import * as api from "../api";
@@ -255,13 +254,11 @@ function VerifyTab({ customer, onCustomerUpdated }) {
     setBusy(true);
     setError("");
     try {
-      await sendEmailVerification(auth.currentUser);
+      await api.sendVerificationEmail(customer.email);
       setResent(true);
       setTimeout(() => setResent(false), 4000);
     } catch (err) {
-      setError(err.code === "auth/too-many-requests"
-        ? "Please wait a bit before requesting another email."
-        : (err.message || "Couldn't resend the verification email."));
+      setError(err.message || "Couldn't resend the verification email.");
     } finally {
       setBusy(false);
     }
@@ -302,17 +299,16 @@ function PasswordTab({ customer }) {
 
   // Passwords now live entirely in Firebase — the cleanest, most secure
   // way to change one without re-collecting the current password here is
-  // to send the standard Firebase reset-password email.
+  // to send a reset-password email (in our own branded template — see
+  // server/emailTemplates.js — with a Firebase-generated link).
   const handleSendReset = async () => {
     setBusy(true);
     setError("");
     try {
-      await sendPasswordResetEmail(auth, customer.email);
+      await api.sendPasswordResetEmail(customer.email);
       setSent(true);
     } catch (err) {
-      setError(err.code === "auth/too-many-requests"
-        ? "Please wait a bit before requesting another email."
-        : (err.message || "Couldn't send the reset email."));
+      setError(err.message || "Couldn't send the reset email.");
     } finally {
       setBusy(false);
     }

@@ -5,6 +5,7 @@ import { upload } from "../upload.js";
 import { sendOrderReceiptEmail } from "../email.js";
 import { publicWriteLimiter } from "../rateLimit.js";
 import { writeStockToSheet } from "../sync/sheetsSync.js";
+import { pushOrderToSheet, updateOrderStatusInSheet, updatePaymentStatusInSheet } from "../sync/poSheetSync.js";
 
 const router = Router();
 
@@ -147,6 +148,15 @@ router.post("/", publicWriteLimiter, async (req, res) => {
     });
   }
 
+  // Mirror the new PO into the Google Sheet's "PO Register"/"PO Items"
+  // tabs, same fire-and-forget treatment as the receipt email and the
+  // stock write-back above — never lets a Sheets hiccup fail the order.
+  pushOrderToSheet(order).then((result) => {
+    if (!result.pushed) {
+      console.warn(`Order ${id}: didn't push PO to sheet: ${result.reason}`);
+    }
+  });
+
   res.status(201).json(order);
 });
 
@@ -168,7 +178,11 @@ router.patch("/:id/status", requireAdmin, (req, res) => {
   const { status } = req.body;
   const result = db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: "Order not found" });
-  res.json(getOrderWithItems(req.params.id));
+  const order = getOrderWithItems(req.params.id);
+  updateOrderStatusInSheet(order).then((r) => {
+    if (!r.written) console.warn(`Order ${order.id}: didn't update sheet status: ${r.reason}`);
+  });
+  res.json(order);
 });
 
 // PATCH /api/orders/:id/payment-status
@@ -176,7 +190,11 @@ router.patch("/:id/payment-status", requireAdmin, (req, res) => {
   const { paymentStatus } = req.body;
   const result = db.prepare("UPDATE orders SET payment_status = ? WHERE id = ?").run(paymentStatus, req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: "Order not found" });
-  res.json(getOrderWithItems(req.params.id));
+  const order = getOrderWithItems(req.params.id);
+  updatePaymentStatusInSheet(order).then((r) => {
+    if (!r.written) console.warn(`Order ${order.id}: didn't update sheet payment status: ${r.reason}`);
+  });
+  res.json(order);
 });
 
 export default router;

@@ -32,6 +32,33 @@ if (isConfigured && !getApps().length) {
 
 export const isFirebaseConfigured = isConfigured;
 
+// Where Firebase should send the browser back to after the person clicks
+// the verification/reset link in the email (its own "continue URL", not
+// this app's API) — i.e. the storefront itself.
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+const actionCodeSettings = { url: FRONTEND_ORIGIN, handleCodeInApp: false };
+
+// Generates the actual verification/reset link using Firebase's own
+// servers (same security/expiry as Firebase's built-in email), but
+// *without* Firebase also emailing it — that's left to the caller, so a
+// custom, on-brand email (see server/emailTemplates.js) can be sent
+// instead of Firebase's default template. Throws the same errors
+// Firebase's client SDK would (e.g. no account with that email), so
+// callers can reuse the same friendly-error handling.
+export async function generateVerificationLink(email) {
+  if (!isConfigured) {
+    throw new Error("Firebase Admin isn't configured on the server (missing FIREBASE_* env vars).");
+  }
+  return getAuth().generateEmailVerificationLink(email, actionCodeSettings);
+}
+
+export async function generatePasswordResetLink(email) {
+  if (!isConfigured) {
+    throw new Error("Firebase Admin isn't configured on the server (missing FIREBASE_* env vars).");
+  }
+  return getAuth().generatePasswordResetLink(email, actionCodeSettings);
+}
+
 // Verifies a Firebase ID token and returns its decoded claims (uid, email,
 // email_verified, name, ...), or throws if the token is invalid/expired.
 export async function verifyFirebaseToken(idToken) {

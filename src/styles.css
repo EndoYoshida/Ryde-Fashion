@@ -467,6 +467,10 @@
 .admin-order-detail ul { list-style:none; margin:0 0 12px; padding:0; }
 .admin-order-detail p { margin:0 0 10px; }
 .admin-proof-thumb { width:100px; border-radius:5px; border:1px solid var(--beige); display:block; }
+.admin-po-items-table { width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:4px; }
+.admin-po-items-table th { text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-soft); padding:6px 8px; border-bottom:1px solid var(--beige); }
+.admin-po-items-table td { padding:6px 8px; border-bottom:1px solid var(--beige); }
+.admin-po-items-table tr:last-child td { border-bottom:none; }
 
 .admin-ticket-list { display:flex; flex-direction:column; gap:12px; }
 .admin-ticket-card { background:var(--ivory); border:1px solid var(--beige); border-radius:8px; padding:16px 18px; }

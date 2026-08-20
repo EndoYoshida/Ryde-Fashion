@@ -250,6 +250,31 @@ export function newProductHtml(product) {
   });
 }
 
+export function accountVerificationLinkHtml(link) {
+  return layout({
+    preheader: "Verify your email to finish setting up your Ryde account",
+    heading: "Verify your email",
+    bodyHtml: `
+      <p style="margin:0 0 6px;">Welcome to Ryde Fashion!</p>
+      <p style="margin:0;">Click the button below to verify your email address and finish setting up your account.</p>
+      ${button("Verify email", link)}
+      <p style="margin:18px 0 0; font-size:13px; color:#9C8B85;">If you didn't create this account, you can safely ignore this email. This link will expire after a while, and you can always request a new one from your account page.</p>
+    `,
+  });
+}
+
+export function passwordResetLinkHtml(link) {
+  return layout({
+    preheader: "Reset your Ryde Fashion password",
+    heading: "Reset your password",
+    bodyHtml: `
+      <p style="margin:0;">We received a request to reset the password on your Ryde Fashion account. Click below to choose a new one.</p>
+      ${button("Reset password", link)}
+      <p style="margin:18px 0 0; font-size:13px; color:#9C8B85;">If you didn't request this, you can safely ignore this email — your password won't change unless you click the link above and set a new one.</p>
+    `,
+  });
+}
+
 export function replyBaseHtml(text) {
   // Generic fallback wrapper for any plain-text reply that doesn't have a
   // dedicated template above.

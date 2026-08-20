@@ -2,8 +2,7 @@ import React, { useState } from "react";
 import { X, Mail, User, Phone, AtSign } from "lucide-react";
 import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  signInWithPopup, sendEmailVerification, sendPasswordResetEmail,
-  updateProfile,
+  signInWithPopup, updateProfile,
 } from "firebase/auth";
 import logo from "../assets/logo.jpg";
 import { auth, googleProvider } from "../firebaseConfig";
@@ -75,10 +74,10 @@ export default function AuthModal({ open, onClose, onAuthSuccess }) {
     }
     setBusy(true);
     try {
-      await sendPasswordResetEmail(auth, form.email.trim());
+      await api.sendPasswordResetEmail(form.email.trim());
       setResetSent(true);
     } catch (err) {
-      setError(friendlyAuthError(err));
+      setError(err.message || "Couldn't send the reset email. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -108,7 +107,7 @@ export default function AuthModal({ open, onClose, onAuthSuccess }) {
       if (mode === "signup") {
         const cred = await createUserWithEmailAndPassword(auth, form.email.trim(), form.password);
         await updateProfile(cred.user, { displayName: form.name.trim() });
-        sendEmailVerification(cred.user).catch(() => {}); // best-effort, don't block signup on it
+        api.sendVerificationEmail(form.email.trim()).catch(() => {}); // best-effort, don't block signup on it
         await finishSignIn(form.username.trim());
       } else {
         await signInWithEmailAndPassword(auth, form.email.trim(), form.password);
