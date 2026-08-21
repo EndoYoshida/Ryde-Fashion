@@ -452,7 +452,6 @@
      actually made the dashboard feel unusable on a phone. Turn each row
      into a labelled card instead of a scrolling table. */
   .admin-topbar { align-items:center; gap:10px; }
-  .admin-filter-add-btn { width:100%; justify-content:center; margin-left:0; order:99; }
   .admin-search-box { max-width:none; }
   .admin-table-wrap { overflow-x:visible; border:none; background:none; }
   .admin-table thead { display:none; }
