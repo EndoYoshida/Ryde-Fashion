@@ -1,20 +1,42 @@
 import React, { useState, useMemo } from "react";
 import { Plus, Pencil, Trash2, Search } from "lucide-react";
-import { peso, STATUS_LABEL } from "../../data/products";
+import { peso, STATUS_LABEL, CATEGORIES, STATUS_OPTIONS } from "../../data/products";
 import ProductFormModal from "./ProductFormModal";
 import ProductImage from "../ui/ProductImage";
 
+// Sort choices offered in the products toolbar. Each maps to a compare
+// function so switching "sort by" is just picking a different entry here.
+const SORT_OPTIONS = [
+  { id: "name-asc", label: "Name (A–Z)", compare: (a, b) => a.name.localeCompare(b.name) },
+  { id: "name-desc", label: "Name (Z–A)", compare: (a, b) => b.name.localeCompare(a.name) },
+  { id: "price-asc", label: "Price (Low to High)", compare: (a, b) => Number(a.price) - Number(b.price) },
+  { id: "price-desc", label: "Price (High to Low)", compare: (a, b) => Number(b.price) - Number(a.price) },
+  { id: "stock-asc", label: "Stock (Low to High)", compare: (a, b) => Number(a.stock) - Number(b.stock) },
+  { id: "stock-desc", label: "Stock (High to Low)", compare: (a, b) => Number(b.stock) - Number(a.stock) },
+];
+
 export default function AdminProducts({ products, addProduct, updateProduct, deleteProduct, uploadImages, deleteImage }) {
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("name-asc");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return products;
-    const q = search.toLowerCase();
-    return products.filter((p) => p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q));
-  }, [products, search]);
+    let list = products;
+
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter((p) => p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q));
+    }
+    if (categoryFilter !== "all") list = list.filter((p) => p.category === categoryFilter);
+    if (statusFilter !== "all") list = list.filter((p) => p.status === statusFilter);
+
+    const sort = SORT_OPTIONS.find((s) => s.id === sortBy) || SORT_OPTIONS[0];
+    return [...list].sort(sort.compare);
+  }, [products, search, categoryFilter, statusFilter, sortBy]);
 
   const openAdd = () => { setEditing(null); setModalOpen(true); };
   const openEdit = (p) => { setEditing(p); setModalOpen(true); };
@@ -44,8 +66,49 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search products or brand..." />
       </div>
 
+      <div className="admin-filter-bar">
+        <label className="admin-filter-field">
+          <span>Category</span>
+          <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+            <option value="all">All categories</option>
+            {CATEGORIES.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="admin-filter-field">
+          <span>Status</span>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="all">All statuses</option>
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>{STATUS_LABEL[s].label}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="admin-filter-field">
+          <span>Sort by</span>
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+            {SORT_OPTIONS.map((s) => (
+              <option key={s.id} value={s.id}>{s.label}</option>
+            ))}
+          </select>
+        </label>
+
+        {(categoryFilter !== "all" || statusFilter !== "all" || sortBy !== "name-asc") && (
+          <button
+            type="button"
+            className="admin-link-btn"
+            onClick={() => { setCategoryFilter("all"); setStatusFilter("all"); setSortBy("name-asc"); }}
+          >
+            Reset filters
+          </button>
+        )}
+      </div>
+
       <div className="admin-table-wrap">
-        <table className="admin-table">
+        <table className="admin-table admin-products-table">
           <thead>
             <tr>
               <th></th>

@@ -39,11 +39,18 @@ export default function AdminLayout({
     <div className="admin-shell">
       <aside className="admin-sidebar">
         <div className="admin-brand">
-          <img src={logo} alt="Ryde Fashion logo" className="logo-img" />
-          <div>
-            <div className="admin-brand-name">RYDE</div>
-            <div className="admin-brand-sub">Admin</div>
-          </div>
+          <button
+            type="button"
+            className="admin-brand-link"
+            onClick={() => selectTab("overview")}
+            aria-label="Go to dashboard"
+          >
+            <img src={logo} alt="Ryde Fashion logo" className="logo-img" />
+            <div className="admin-brand-text">
+              <div className="admin-brand-name">RYDE</div>
+              <div className="admin-brand-sub">Admin</div>
+            </div>
+          </button>
           <button
             type="button"
             className="admin-hamburger"

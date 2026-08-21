@@ -458,12 +458,23 @@
   .admin-table thead { display:none; }
   .admin-table, .admin-table tbody, .admin-table tr, .admin-table td { display:block; width:100%; }
   .admin-table tr { background:var(--ivory); border:1px solid var(--beige); border-radius:8px; padding:4px 14px; margin-bottom:12px; }
+  .admin-products-table tr { position:relative; }
   .admin-table td { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:9px 0; border-bottom:1px solid var(--beige); white-space:normal; text-align:right; }
   .admin-table tr:last-child { margin-bottom:0; }
   .admin-table td:last-child { border-bottom:none; }
   .admin-table td[data-label]:not([data-label=""])::before { content:attr(data-label); font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--ink-soft); text-align:left; flex-shrink:0; }
   .admin-table td[data-label=""] { justify-content:flex-start; }
-  .admin-table .admin-table-actions { justify-content:flex-end; }
+  /* On the products table, edit/delete used to sit in their own full-
+     width row at the bottom of the card, wasting the empty space beside
+     them and adding extra card height. Pin them to the top-right corner
+     instead, over the row that just holds the thumbnail, so that row's
+     spare space gets used and the card doesn't need a dedicated row for
+     actions at all. Scoped to products only — the orders/customers
+     tables put different content (status dropdowns, text links) in
+     their first/last rows, so the same absolute positioning would
+     overlap there instead of landing on empty space. */
+  .admin-products-table .admin-table-actions { position:absolute; top:9px; right:14px; padding:0; border-bottom:none; width:auto; }
+  .admin-products-table tr td:nth-last-child(2) { border-bottom:none; }
   .admin-table tr.admin-expand-row { background:var(--cream); border-color:var(--beige); margin-top:-12px; padding:2px 14px 10px; }
   .admin-table .admin-expand-row td { display:block; text-align:left; padding:8px 0; }
 }
@@ -474,6 +485,7 @@
 
 .admin-sidebar { width:220px; flex-shrink:0; background:var(--ivory); border-right:1px solid var(--beige); padding:24px 16px; display:flex; flex-direction:column; position:sticky; top:0; height:100vh; }
 .admin-brand { display:flex; align-items:center; gap:10px; padding:0 8px 22px; border-bottom:1px solid var(--beige); margin-bottom:18px; }
+.admin-brand-link { display:flex; align-items:center; gap:10px; background:none; border:none; padding:0; cursor:pointer; text-align:left; }
 .admin-brand-name { font-family:'Cormorant Garamond',serif; font-size:18px; letter-spacing:2px; font-weight:600; }
 .admin-brand-sub { font-size:10.5px; color:var(--gold); letter-spacing:1px; text-transform:uppercase; }
 .admin-nav { display:flex; flex-direction:column; gap:2px; flex:1; }
@@ -516,6 +528,11 @@
 
 .admin-search-box { display:flex; align-items:center; gap:8px; background:var(--ivory); border:1px solid var(--beige); border-radius:6px; padding:9px 14px; max-width:340px; margin-bottom:18px; }
 .admin-search-box input { border:none; outline:none; background:none; font-size:13.5px; width:100%; }
+
+.admin-filter-bar { display:flex; flex-wrap:wrap; align-items:end; gap:14px; margin-bottom:18px; }
+.admin-filter-field { display:flex; flex-direction:column; gap:4px; font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--ink-soft); }
+.admin-filter-field select { padding:8px 10px; border:1px solid var(--beige); border-radius:6px; font-size:12.5px; text-transform:none; letter-spacing:normal; color:var(--ink); background:var(--ivory); min-width:150px; }
+.admin-filter-bar .admin-link-btn { align-self:center; margin-bottom:1px; white-space:nowrap; }
 
 .admin-table-wrap { background:var(--ivory); border:1px solid var(--beige); border-radius:8px; overflow-x:auto; }
 .admin-table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -576,6 +593,10 @@
      of icon+label buttons squeezed/scrolling across the screen. */
   .admin-sidebar { width:100%; height:auto; position:sticky; top:0; z-index:30; flex-direction:column; align-items:stretch; padding:0; }
   .admin-sidebar .admin-brand { border:none; border-bottom:1px solid var(--beige); margin:0; padding:12px 16px; justify-content:space-between; }
+  /* "RYDE" and "Admin" stack into two lines on desktop; on phone/tablet
+     widths put them on one line ("RYDE ADMIN") since there's no room
+     to spare for a two-line lockup in the mobile topbar. */
+  .admin-brand-text { display:flex; flex-direction:row; align-items:baseline; gap:5px; }
   .admin-hamburger { display:flex; align-items:center; justify-content:center; }
 
   .admin-nav-wrap { display:none; }
