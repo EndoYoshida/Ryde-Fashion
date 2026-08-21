@@ -5,7 +5,7 @@ import {
   issueSession, endSession, requireCustomer, publicCustomer,
   generateVerificationCode, codeExpiryTimestamp, isCodeExpired,
 } from "../customerAuth.js";
-import { verifyFirebaseToken, generateVerificationLink, generatePasswordResetLink } from "../firebaseAdmin.js";
+import { verifyFirebaseToken, generateVerificationLink, generatePasswordResetLink, deleteFirebaseUser } from "../firebaseAdmin.js";
 import { sendDeletionConfirmationEmail, sendCustomerVerificationLinkEmail, sendCustomerPasswordResetEmail } from "../email.js";
 
 const router = Router();
@@ -233,6 +233,18 @@ router.delete("/me", requireCustomer, asyncHandler(async (req, res) => {
     }
     if (!code || String(code).trim() !== req.customer.verification_code) {
       return res.status(400).json({ error: "That confirmation code doesn't match." });
+    }
+  }
+
+  // Delete the Firebase Auth user first (best-effort — if this fails we
+  // still proceed with the local soft delete, but log it since it means
+  // the email will stay locked out of signing up again until cleaned up
+  // manually). Read the uid before we null it out below.
+  if (req.customer.firebase_uid) {
+    try {
+      await deleteFirebaseUser(req.customer.firebase_uid);
+    } catch (err) {
+      console.error(`Failed to delete Firebase user ${req.customer.firebase_uid} for customer ${req.customer.id}:`, err.message);
     }
   }
 
