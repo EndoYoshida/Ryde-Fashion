@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { LayoutDashboard, Package, ClipboardList, Users, Headphones, LogOut } from "lucide-react";
+import { LayoutDashboard, Package, ClipboardList, Users, Headphones, LogOut, Menu, X } from "lucide-react";
 import logo from "../../assets/logo.jpg";
 import AdminOverview from "./AdminOverview";
 import AdminProducts from "./AdminProducts";
@@ -16,6 +16,9 @@ export default function AdminLayout({
   tickets, resolveTicket, refreshTicket,
 }) {
   const [tab, setTab] = useState("overview");
+  // Only used at mobile widths — the sidebar itself stays a plain always-
+  // visible column on desktop (see .admin-hamburger's display:none there).
+  const [navOpen, setNavOpen] = useState(false);
 
   const nav = [
     { id: "overview", label: "Dashboard", icon: LayoutDashboard },
@@ -24,6 +27,13 @@ export default function AdminLayout({
     { id: "customers", label: "Customers", icon: Users },
     { id: "support", label: "Support", icon: Headphones },
   ];
+
+  // Picking a section closes the mobile dropdown too, so it doesn't sit
+  // open over the newly-selected page.
+  const selectTab = (id) => {
+    setTab(id);
+    setNavOpen(false);
+  };
 
   return (
     <div className="admin-shell">
@@ -34,19 +44,33 @@ export default function AdminLayout({
             <div className="admin-brand-name">RYDE</div>
             <div className="admin-brand-sub">Admin</div>
           </div>
+          <button
+            type="button"
+            className="admin-hamburger"
+            onClick={() => setNavOpen((o) => !o)}
+            aria-label={navOpen ? "Close menu" : "Open menu"}
+            aria-expanded={navOpen}
+          >
+            {navOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
         </div>
-        <nav className="admin-nav">
-          {nav.map((n) => (
-            <button key={n.id} className={`admin-nav-item ${tab === n.id ? "active" : ""}`} onClick={() => setTab(n.id)}>
-              <n.icon size={17} strokeWidth={1.75} />
-              {n.label}
-            </button>
-          ))}
-        </nav>
-        <button className="admin-nav-item admin-logout" onClick={onLeaveAdmin}>
-          <LogOut size={17} strokeWidth={1.75} />
-          Log out &amp; return to store
-        </button>
+
+        {navOpen && <div className="admin-nav-backdrop" onClick={() => setNavOpen(false)} />}
+
+        <div className={`admin-nav-wrap ${navOpen ? "open" : ""}`}>
+          <nav className="admin-nav">
+            {nav.map((n) => (
+              <button key={n.id} className={`admin-nav-item ${tab === n.id ? "active" : ""}`} onClick={() => selectTab(n.id)}>
+                <n.icon size={17} strokeWidth={1.75} />
+                {n.label}
+              </button>
+            ))}
+          </nav>
+          <button className="admin-nav-item admin-logout" onClick={onLeaveAdmin}>
+            <LogOut size={17} strokeWidth={1.75} />
+            Log out &amp; return to store
+          </button>
+        </div>
       </aside>
 
       <main className="admin-main">
