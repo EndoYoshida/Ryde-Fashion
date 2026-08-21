@@ -451,8 +451,8 @@
      still just a horizontally-scrolling wall of cells, which is what
      actually made the dashboard feel unusable on a phone. Turn each row
      into a labelled card instead of a scrolling table. */
-  .admin-topbar { flex-wrap:wrap; gap:12px; }
-  .admin-topbar .btn-gold { width:100%; justify-content:center; }
+  .admin-topbar { align-items:center; gap:10px; }
+  .admin-filter-add-btn { width:100%; justify-content:center; margin-left:0; order:99; }
   .admin-search-box { max-width:none; }
   .admin-table-wrap { overflow-x:visible; border:none; background:none; }
   .admin-table thead { display:none; }
@@ -464,17 +464,25 @@
   .admin-table td:last-child { border-bottom:none; }
   .admin-table td[data-label]:not([data-label=""])::before { content:attr(data-label); font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--ink-soft); text-align:left; flex-shrink:0; }
   .admin-table td[data-label=""] { justify-content:flex-start; }
-  /* On the products table, edit/delete used to sit in their own full-
-     width row at the bottom of the card, wasting the empty space beside
-     them and adding extra card height. Pin them to the top-right corner
-     instead, over the row that just holds the thumbnail, so that row's
-     spare space gets used and the card doesn't need a dedicated row for
-     actions at all. Scoped to products only — the orders/customers
-     tables put different content (status dropdowns, text links) in
-     their first/last rows, so the same absolute positioning would
-     overlap there instead of landing on empty space. */
-  .admin-products-table .admin-table-actions { position:absolute; top:9px; right:14px; padding:0; border-bottom:none; width:auto; }
-  .admin-products-table tr td:nth-last-child(2) { border-bottom:none; }
+  /* Edit/delete used to be pinned to the top-right corner of the card,
+     overlapping the thumbnail row — moved back into normal flow as its
+     own row at the bottom of the card, centered, so it reads as a
+     footer action rather than sitting awkwardly in the corner. */
+  .admin-products-table .admin-table-actions { justify-content:center; padding:10px 0 2px; }
+
+  /* Long product names were getting squeezed into the narrow value side
+     of the card row. Instead of wrapping/truncating, scroll the text
+     left on a loop so the full name is still readable — only for names
+     long enough to actually overflow the box. */
+  .admin-table-name { overflow:hidden; }
+  .admin-marquee { display:block; overflow:hidden; white-space:nowrap; }
+  .admin-marquee span { display:inline-block; white-space:nowrap; }
+  .admin-marquee.scrolling span { animation:admin-marquee-scroll 7s linear infinite; padding-right:28px; }
+  .admin-marquee.scrolling:hover span, .admin-marquee.scrolling:active span { animation-play-state:paused; }
+  @keyframes admin-marquee-scroll {
+    0%, 12% { transform:translateX(0); }
+    88%, 100% { transform:translateX(-52%); }
+  }
   .admin-table tr.admin-expand-row { background:var(--cream); border-color:var(--beige); margin-top:-12px; padding:2px 14px 10px; }
   .admin-table .admin-expand-row td { display:block; text-align:left; padding:8px 0; }
 }
@@ -533,6 +541,11 @@
 .admin-filter-field { display:flex; flex-direction:column; gap:4px; font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--ink-soft); }
 .admin-filter-field select { padding:8px 10px; border:1px solid var(--beige); border-radius:6px; font-size:12.5px; text-transform:none; letter-spacing:normal; color:var(--ink); background:var(--ivory); min-width:150px; }
 .admin-filter-bar .admin-link-btn { align-self:center; margin-bottom:1px; white-space:nowrap; }
+/* Add Product now lives at the end of the filter row instead of pinned
+   top-right next to the heading — margin-left:auto pushes it to the far
+   right on its own row, below the heading, alongside the sort/filter
+   controls it's most related to. */
+.admin-filter-add-btn { margin-left:auto; align-self:center; }
 
 .admin-table-wrap { background:var(--ivory); border:1px solid var(--beige); border-radius:8px; overflow-x:auto; }
 .admin-table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -541,7 +554,12 @@
 .admin-table tr:last-child td { border-bottom:none; }
 .admin-table-name { font-weight:500; }
 .admin-capitalize { text-transform:capitalize; }
-.admin-table-actions { display:flex; gap:6px; }
+.admin-table-actions { display:flex; gap:8px; align-items:center; justify-content:center; }
+/* Give the actions column some breathing room so centering the icons
+   inside it is actually visible, instead of the column shrinking to fit
+   the icons exactly (which made "centered" and "left-aligned" look the
+   same). Scoped to the products table only. */
+.admin-products-table th:last-child, .admin-products-table td:last-child { width:90px; }
 .admin-icon-btn { padding:6px; border-radius:5px; color:var(--ink-soft); }
 .admin-icon-btn:hover { background:var(--cream); color:var(--ink); }
 .admin-icon-btn.danger:hover { background:#F3DCDC; color:#9B4646; }

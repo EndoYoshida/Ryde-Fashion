@@ -58,7 +58,6 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
           <p className="admin-eyebrow">Catalog</p>
           <h1>Products</h1>
         </div>
-        <button className="btn-gold" onClick={openAdd}><Plus size={16} /> Add Product</button>
       </div>
 
       <div className="admin-search-box">
@@ -105,6 +104,8 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
             Reset filters
           </button>
         )}
+
+        <button className="btn-gold admin-filter-add-btn" onClick={openAdd}><Plus size={16} /> Add Product</button>
       </div>
 
       <div className="admin-table-wrap">
@@ -132,7 +133,11 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
                       <ProductImage Icon={p.icon} size={16} src={p.images?.[0]?.url} />
                     </div>
                   </td>
-                  <td className="admin-table-name" data-label="Product">{p.name}</td>
+                  <td className="admin-table-name" data-label="Product">
+                    <span className={`admin-marquee${p.name.length > 24 ? " scrolling" : ""}`}>
+                      <span>{p.name}</span>
+                    </span>
+                  </td>
                   <td data-label="Brand">{p.brand}</td>
                   <td className="admin-capitalize" data-label="Category">{p.category}</td>
                   <td data-label="Price">{peso(p.price)}</td>
