@@ -8,6 +8,20 @@ import { rowToProduct, notifyWishlistersBackInStock, notifySubscribersNewProduct
 // "Products" or you want to cap how many rows get scanned.
 const SHEET_RANGE = process.env.SHEETS_SYNC_RANGE || "Products";
 
+// Number of rows directly under the header to always ignore, e.g. so you
+// can keep a "template"/example row (or two) at the top of the sheet for
+// reference without it being read, synced, or overwritten as real product
+// data. Set SHEETS_SYNC_RESERVED_ROWS=2 in your env to skip rows 2-3 and
+// start reading real data at row 4. Defaults to 0 (no reserved rows).
+const RESERVED_ROWS = parseInt(process.env.SHEETS_SYNC_RESERVED_ROWS || "0", 10) || 0;
+
+// Which sheet row (1-indexed) holds the actual column headers (sku, name,
+// brand, ...). Defaults to row 1. Set SHEETS_SYNC_HEADER_ROW=2 if you add
+// a merged title/banner row above your headers (e.g. a "RYDE Products"
+// banner in row 1), so the bot reads row 2 as headers instead of trying
+// to parse the banner text as column names.
+const HEADER_ROW = parseInt(process.env.SHEETS_SYNC_HEADER_ROW || "1", 10) || 1;
+
 // Keep this in lockstep with src/data/products.js's CATEGORIES list — it's
 // duplicated here (rather than imported) because the server and frontend
 // are separate builds. If you add/rename a category on the frontend,
@@ -88,10 +102,10 @@ async function fetchRows() {
     range: SHEET_RANGE,
   });
   const rows = res.data.values || [];
-  if (rows.length < 2) return { fieldMap: {}, records: [] };
+  if (rows.length < HEADER_ROW + 1) return { fieldMap: {}, records: [] };
 
-  const fieldMap = buildFieldMap(rows[0]);
-  const records = rows.slice(1)
+  const fieldMap = buildFieldMap(rows[HEADER_ROW - 1]);
+  const records = rows.slice(HEADER_ROW + RESERVED_ROWS)
     .filter((row) => row.some((cell) => String(cell || "").trim() !== ""))
     .map((row) => rowToRecord(row, fieldMap));
   return { fieldMap, records };
@@ -240,19 +254,19 @@ export async function writeStockToSheet(sku, newStock, newStatus) {
       range: SHEET_RANGE,
     });
     const rows = res.data.values || [];
-    if (rows.length < 2) return { written: false, reason: "sheet is empty" };
+    if (rows.length < HEADER_ROW + 1) return { written: false, reason: "sheet is empty" };
 
-    const fieldMap = buildFieldMap(rows[0]);
+    const fieldMap = buildFieldMap(rows[HEADER_ROW - 1]);
     if (fieldMap.stock == null) return { written: false, reason: 'sheet has no "stock" column' };
     if (fieldMap.sku == null) return { written: false, reason: 'sheet has no "sku" column' };
 
-    const dataRows = rows.slice(1);
+    const dataRows = rows.slice(HEADER_ROW + RESERVED_ROWS);
     const rowIndex = dataRows.findIndex(
       (row) => (row[fieldMap.sku] || "").toString().trim() === sku
     );
     if (rowIndex === -1) return { written: false, reason: `sku "${sku}" not found in sheet` };
 
-    const sheetRowNumber = rowIndex + 2; // +1 to skip the header row, +1 for 1-indexing
+    const sheetRowNumber = rowIndex + HEADER_ROW + RESERVED_ROWS + 1; // 1-indexing, past the header row, past any reserved template rows
     const data = [{
       range: `${SHEET_RANGE}!${columnIndexToLetter(fieldMap.stock)}${sheetRowNumber}`,
       values: [[newStock]],
@@ -292,8 +306,8 @@ async function loadSheetHeaderAndRows() {
     range: SHEET_RANGE,
   });
   const rows = res.data.values || [];
-  const fieldMap = rows.length ? buildFieldMap(rows[0]) : {};
-  return { sheets, headerRow: rows[0] || [], dataRows: rows.slice(1), fieldMap };
+  const fieldMap = rows.length >= HEADER_ROW ? buildFieldMap(rows[HEADER_ROW - 1]) : {};
+  return { sheets, headerRow: rows[HEADER_ROW - 1] || [], dataRows: rows.slice(HEADER_ROW + RESERVED_ROWS), fieldMap };
 }
 
 // Pushes one product's full field set into its sheet row — called after
@@ -335,7 +349,7 @@ export async function writeProductToSheet(product) {
 
     if (rowIndex !== -1) {
       // Existing sheet row for this sku — update each mapped column in place.
-      const sheetRowNumber = rowIndex + 2;
+      const sheetRowNumber = rowIndex + HEADER_ROW + RESERVED_ROWS + 1;
       const data = [];
       for (const field of WRITE_BACK_FIELDS) {
         if (fieldMap[field] == null) continue;
@@ -395,7 +409,7 @@ export async function clearProductRowInSheet(sku) {
     const rowIndex = dataRows.findIndex((row) => (row[fieldMap.sku] || "").toString().trim() === sku);
     if (rowIndex === -1) return { written: false, reason: `sku "${sku}" not found in sheet` };
 
-    const sheetRowNumber = rowIndex + 2;
+    const sheetRowNumber = rowIndex + HEADER_ROW + RESERVED_ROWS + 1;
     const sheets = getSheetsClient();
     await sheets.spreadsheets.values.clear({
       spreadsheetId: process.env.SHEETS_SYNC_SHEET_ID,
