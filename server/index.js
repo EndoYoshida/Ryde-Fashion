@@ -50,11 +50,20 @@ if (process.env.NODE_ENV === "production") {
   });
 }
 
-// Only the storefront's own origin may call this API. A malicious site
+// Only the storefront's own origin(s) may call this API. A malicious site
 // can't get a browser to make authenticated cross-origin requests here —
 // and even unauthenticated ones (like the public product list) are
 // restricted to origins this app actually expects.
-const ALLOWED_ORIGIN = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+//
+// FRONTEND_ORIGIN accepts one origin, or several comma-separated (e.g.
+// "https://rydefashion.com,https://www.rydefashion.com" — and keep the
+// old https://ryde-fashion.onrender.com in there too if you haven't
+// disabled that subdomain in Render, since it stays live otherwise and
+// its requests would get CORS-blocked without this).
+const ALLOWED_ORIGINS = (process.env.FRONTEND_ORIGIN || "http://localhost:5173")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
 
 app.use(helmet({
   // Product images are served from this API (port 4000) but requested
@@ -63,7 +72,14 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
   crossOriginEmbedderPolicy: false,
 }));
-app.use(cors({ origin: ALLOWED_ORIGIN }));
+app.use(cors({
+  origin(origin, callback) {
+    // No Origin header (e.g. curl, server-to-server, same-origin requests)
+    // — let it through, same as the previous single-string config did.
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    callback(new Error(`Origin "${origin}" is not allowed by CORS`));
+  },
+}));
 app.use(express.json({ limit: "1mb" }));
 // Product/proof images are now served directly from Cloudinary's own CDN
 // URLs (see upload.js) rather than from this server, since Render's disk
