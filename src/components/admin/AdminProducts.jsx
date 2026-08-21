@@ -64,19 +64,19 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
               const st = STATUS_LABEL[p.status];
               return (
                 <tr key={p.id}>
-                  <td>
+                  <td data-label="">
                     <div className="admin-thumb">
                       <ProductImage Icon={p.icon} size={16} src={p.images?.[0]?.url} />
                     </div>
                   </td>
-                  <td className="admin-table-name">{p.name}</td>
-                  <td>{p.brand}</td>
-                  <td className="admin-capitalize">{p.category}</td>
-                  <td>{peso(p.price)}</td>
-                  <td>{p.stock}</td>
-                  <td><span className={`status-badge inline ${st.cls}`}>{st.label}</span></td>
-                  <td>{p.tag || "—"}</td>
-                  <td className="admin-table-actions">
+                  <td className="admin-table-name" data-label="Product">{p.name}</td>
+                  <td data-label="Brand">{p.brand}</td>
+                  <td className="admin-capitalize" data-label="Category">{p.category}</td>
+                  <td data-label="Price">{peso(p.price)}</td>
+                  <td data-label="Stock">{p.stock}</td>
+                  <td data-label="Status"><span className={`status-badge inline ${st.cls}`}>{st.label}</span></td>
+                  <td data-label="Tag">{p.tag || "—"}</td>
+                  <td className="admin-table-actions" data-label="">
                     <button className="admin-icon-btn" onClick={() => openEdit(p)} aria-label="Edit"><Pencil size={14} /></button>
                     <button className="admin-icon-btn danger" onClick={() => setConfirmDelete(p)} aria-label="Delete"><Trash2 size={14} /></button>
                   </td>

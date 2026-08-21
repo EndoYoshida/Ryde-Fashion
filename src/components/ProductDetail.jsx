@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { ShoppingBag, Heart, X, Plus, Minus, Check } from "lucide-react";
+import { ShoppingBag, Heart, X, Plus, Minus, Check, ZoomIn } from "lucide-react";
 import { peso, STATUS_LABEL } from "../data/products";
 import Stars from "./ui/Stars";
 import StarInput from "./ui/StarInput";
 import ProductImage from "./ui/ProductImage";
+import { SERVER_ORIGIN } from "../api";
 import * as api from "../api";
 
 export default function ProductDetail({ product, onClose, addToCart, toggleWish, wishlist, products, openProduct, customer, rateProduct }) {
@@ -12,6 +13,19 @@ export default function ProductDetail({ product, onClose, addToCart, toggleWish,
   const [myRating, setMyRating] = useState(0);
   const [ratingBusy, setRatingBusy] = useState(false);
   const [rated, setRated] = useState(false);
+  // Cursor-following magnifier on the main image (see .detail-main-img
+  // hover styles) — origin% is where the zoomed image centers under the
+  // pointer, so it needs live mouse position while hovered.
+  const [zoomActive, setZoomActive] = useState(false);
+  const [zoomOrigin, setZoomOrigin] = useState("50% 50%");
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+
+  const handleImgMouseMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    setZoomOrigin(`${x}% ${y}%`);
+  };
 
   useEffect(() => {
     setSelectedImg(0);
@@ -31,6 +45,8 @@ export default function ProductDetail({ product, onClose, addToCart, toggleWish,
   // currently looking at, excluding this product itself.
   const related = products.filter((p) => p.category === product.category && p.id !== product.id).slice(0, 4);
   const images = product.images || [];
+  const mainImgUrl = images[selectedImg]?.url;
+  const mainImgFullSrc = mainImgUrl ? (mainImgUrl.startsWith("http") ? mainImgUrl : `${SERVER_ORIGIN}${mainImgUrl}`) : null;
 
   const handleRate = async (value) => {
     if (!customer) return;
@@ -54,8 +70,18 @@ export default function ProductDetail({ product, onClose, addToCart, toggleWish,
         <button className="close-btn" onClick={onClose} aria-label="Close"><X size={20} /></button>
         <div className="detail-grid">
           <div className="detail-images">
-            <div className="detail-main-img">
-              <ProductImage Icon={product.icon} size={64} src={images[selectedImg]?.url} />
+            <div
+              className={`detail-main-img ${mainImgFullSrc ? "zoomable" : ""} ${zoomActive ? "is-zoomed" : ""}`}
+              style={mainImgFullSrc && zoomActive ? { backgroundImage: `url(${mainImgFullSrc})`, backgroundPosition: zoomOrigin } : undefined}
+              onMouseEnter={() => mainImgFullSrc && setZoomActive(true)}
+              onMouseLeave={() => setZoomActive(false)}
+              onMouseMove={mainImgFullSrc ? handleImgMouseMove : undefined}
+              onClick={() => mainImgFullSrc && setLightboxOpen(true)}
+            >
+              <ProductImage Icon={product.icon} size={64} src={mainImgUrl} />
+              {mainImgFullSrc && (
+                <span className="zoom-hint"><ZoomIn size={14} /> Click to zoom</span>
+              )}
             </div>
             {images.length > 1 ? (
               <div className="thumb-row">
@@ -153,6 +179,27 @@ export default function ProductDetail({ product, onClose, addToCart, toggleWish,
           </div>
         )}
       </div>
+
+      {lightboxOpen && mainImgFullSrc && (
+        <div
+          className="overlay center lightbox-overlay"
+          onClick={(e) => { e.stopPropagation(); setLightboxOpen(false); }}
+        >
+          <button
+            className="close-btn lightbox-close"
+            onClick={(e) => { e.stopPropagation(); setLightboxOpen(false); }}
+            aria-label="Close"
+          >
+            <X size={20} />
+          </button>
+          <img
+            src={mainImgFullSrc}
+            alt={product.name}
+            className="lightbox-img"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

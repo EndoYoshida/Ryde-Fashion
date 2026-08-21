@@ -7,7 +7,9 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
   const [sort, setSort] = useState("newest");
   const [priceMax, setPriceMax] = useState(16000);
   const [availOnly, setAvailOnly] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  // Collapsed by default — expanding to show every filter section right
+  // away buried the product grid below the fold on first load.
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const filtered = useMemo(() => {
     let list = products.filter((p) => p.price <= priceMax);

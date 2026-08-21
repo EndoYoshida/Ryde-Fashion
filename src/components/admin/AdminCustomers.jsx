@@ -47,18 +47,18 @@ export default function AdminCustomers({ customers, toggleCustomerStatus, delete
               const isDeleted = c.status === "deleted";
               return (
                 <tr key={c.id}>
-                  <td className="admin-table-name">{c.name}</td>
-                  <td>{c.email}</td>
-                  <td>{c.phone}</td>
-                  <td>{c.joined}</td>
-                  <td>{c.orders}</td>
-                  <td>{peso(c.totalSpent)}</td>
-                  <td>
+                  <td className="admin-table-name" data-label="Name">{c.name}</td>
+                  <td data-label="Email">{c.email}</td>
+                  <td data-label="Phone">{c.phone}</td>
+                  <td data-label="Joined">{c.joined}</td>
+                  <td data-label="Orders">{c.orders}</td>
+                  <td data-label="Total spent">{peso(c.totalSpent)}</td>
+                  <td data-label="Status">
                     <span className={`status-badge inline ${STATUS_BADGE[c.status] || "badge-off"}`}>
                       {c.status}
                     </span>
                   </td>
-                  <td>
+                  <td data-label="">
                     {isDeleted ? (
                       <button className="admin-link-btn" onClick={() => restoreCustomer(c.id)}>
                         Restore

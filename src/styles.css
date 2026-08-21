@@ -236,9 +236,30 @@
 /* product detail overlay */
 .overlay { position:fixed; inset:0; background:rgba(58,43,40,0.5); display:flex; justify-content:flex-end; z-index:100; }
 .detail-panel { background:var(--ivory); width:100%; max-width:920px; margin:auto; border-radius:8px; max-height:92vh; overflow-y:auto; padding:36px; position:relative; }
-.close-btn { position:absolute; top:20px; right:20px; padding:8px; border-radius:50%; background:var(--cream); z-index:2; }
+.close-btn { position:absolute; top:20px; right:20px; padding:8px; border-radius:50%; background:var(--cream); z-index:2; border:1.5px solid transparent; transition:border-color .15s ease, background .15s ease, transform .15s ease; }
+.close-btn:hover, .close-btn:focus-visible { border-color:var(--gold); background:var(--ivory); }
+.close-btn:active { border-color:var(--ink); transform:scale(0.92); outline:none; }
 .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:40px; }
-.detail-main-img { aspect-ratio:1/1; background:linear-gradient(160deg, var(--blush), var(--cream)); border-radius:6px; display:flex; align-items:center; justify-content:center; color:var(--gold); overflow:hidden; }
+.detail-main-img { aspect-ratio:1/1; background:linear-gradient(160deg, var(--blush), var(--cream)); border-radius:6px; display:flex; align-items:center; justify-content:center; color:var(--gold); overflow:hidden; position:relative; }
+/* object-fit:cover (used everywhere else — grid cards, thumbnails) crops
+   the edges off whenever the photo's aspect ratio doesn't match the square
+   frame. In the big detail view that cropping is much more noticeable, so
+   show the whole image here instead, letterboxed on the shorter axis. */
+.detail-main-img .product-img-photo,
+.detail-main-img .product-img-photo img { width:100%; height:100%; }
+.detail-main-img .product-img-photo img { object-fit:contain; background:var(--cream); transition:opacity .15s ease; }
+.detail-main-img.zoomable { cursor:zoom-in; }
+.detail-main-img.is-zoomed .product-img-photo img { opacity:0; }
+.detail-main-img.is-zoomed { background-repeat:no-repeat; background-size:220%; }
+.zoom-hint { position:absolute; bottom:10px; right:10px; display:flex; align-items:center; gap:5px; background:rgba(255,255,255,0.9); color:var(--ink-soft); font-size:10.5px; padding:5px 10px; border-radius:20px; opacity:0; transition:opacity .2s ease; pointer-events:none; }
+.detail-main-img:hover .zoom-hint { opacity:1; }
+.detail-main-img.is-zoomed .zoom-hint { opacity:0; }
+
+/* click-to-zoom lightbox for the main product image */
+.lightbox-overlay { z-index:110; background:rgba(20,14,13,0.86); }
+.lightbox-img { max-width:92vw; max-height:88vh; object-fit:contain; border-radius:6px; cursor:zoom-out; box-shadow:0 20px 60px rgba(0,0,0,0.4); }
+.lightbox-close { background:rgba(255,255,255,0.9); }
+
 .thumb-row { display:flex; gap:10px; margin-top:10px; }
 .thumb { width:56px; height:56px; border-radius:4px; background:var(--cream); border:1px solid var(--beige); display:flex; align-items:center; justify-content:center; color:var(--gold); overflow:hidden; padding:0; cursor:pointer; }
 .thumb.active { border-color:var(--gold); border-width:2px; }
@@ -355,10 +376,12 @@
   .filter-collapse-inner { display:flex; flex-wrap:wrap; gap:20px; padding-top:2px; }
   .desktop-only { display:none !important; }
   .mobile-only { display:flex !important; }
-  .mobile-menu { display:flex; flex-direction:column; background:var(--ivory); border-bottom:1px solid var(--beige); padding:10px 20px; animation:mobile-menu-drop .2s ease; }
+  .mobile-menu { display:flex; flex-direction:column; background:var(--ivory); border-bottom:1px solid var(--beige); padding:10px 20px; transform-origin:top; animation:mobile-menu-drop .22s ease; }
+  .mobile-menu.closing { animation:mobile-menu-close .2s ease forwards; }
   .mobile-menu button { padding:10px 0; text-align:left; font-size:14px; border-bottom:1px solid var(--beige); transition:padding-left .15s ease, color .15s ease; }
   .mobile-menu button:hover { padding-left:6px; color:var(--gold); }
-  @keyframes mobile-menu-drop { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes mobile-menu-drop { from { opacity:0; transform:translateY(-8px) scaleY(0.94); } to { opacity:1; transform:translateY(0) scaleY(1); } }
+  @keyframes mobile-menu-close { from { opacity:1; transform:translateY(0) scaleY(1); } to { opacity:0; transform:translateY(-8px) scaleY(0.94); } }
   .hero h1 { font-size:30px; }
 }
 
@@ -410,6 +433,27 @@
   .checkout-form h4, .checkout-summary h4 { font-size:16px; }
   .payment-note { display:block; margin-left:0; margin-top:2px; }
   .admin-login-card { padding:30px 22px; }
+
+  /* admin dashboard, phone width — the sidebar/stat-grid/panel rules at
+     900px already keep the shell from breaking, but the data tables were
+     still just a horizontally-scrolling wall of cells, which is what
+     actually made the dashboard feel unusable on a phone. Turn each row
+     into a labelled card instead of a scrolling table. */
+  .admin-topbar { flex-wrap:wrap; gap:12px; }
+  .admin-topbar .btn-gold { width:100%; justify-content:center; }
+  .admin-search-box { max-width:none; }
+  .admin-table-wrap { overflow-x:visible; border:none; background:none; }
+  .admin-table thead { display:none; }
+  .admin-table, .admin-table tbody, .admin-table tr, .admin-table td { display:block; width:100%; }
+  .admin-table tr { background:var(--ivory); border:1px solid var(--beige); border-radius:8px; padding:4px 14px; margin-bottom:12px; }
+  .admin-table td { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:9px 0; border-bottom:1px solid var(--beige); white-space:normal; text-align:right; }
+  .admin-table tr:last-child { margin-bottom:0; }
+  .admin-table td:last-child { border-bottom:none; }
+  .admin-table td[data-label]:not([data-label=""])::before { content:attr(data-label); font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--ink-soft); text-align:left; flex-shrink:0; }
+  .admin-table td[data-label=""] { justify-content:flex-start; }
+  .admin-table .admin-table-actions { justify-content:flex-end; }
+  .admin-table tr.admin-expand-row { background:var(--cream); border-color:var(--beige); margin-top:-12px; padding:2px 14px 10px; }
+  .admin-table .admin-expand-row td { display:block; text-align:left; padding:8px 0; }
 }
 
 /* ============ ADMIN DASHBOARD ============ */

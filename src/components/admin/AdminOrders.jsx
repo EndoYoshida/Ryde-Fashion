@@ -39,11 +39,11 @@ export default function AdminOrders({ orders, updateOrderStatus, updatePaymentSt
             {orders.map((o) => (
               <React.Fragment key={o.id}>
                 <tr>
-                  <td className="admin-table-name">{o.id}</td>
-                  <td>{o.customer}</td>
-                  <td>{o.date}</td>
-                  <td>{peso(o.total)}</td>
-                  <td>
+                  <td className="admin-table-name" data-label="Order">{o.id}</td>
+                  <td data-label="Customer">{o.customer}</td>
+                  <td data-label="Date">{o.date}</td>
+                  <td data-label="Total">{peso(o.total)}</td>
+                  <td data-label="Payment">
                     <select
                       className={`admin-status-select ${STATUS_CLASS[o.paymentStatus]}`}
                       value={o.paymentStatus}
@@ -52,7 +52,7 @@ export default function AdminOrders({ orders, updateOrderStatus, updatePaymentSt
                       {PAYMENT_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <select
                       className={`admin-status-select ${STATUS_CLASS[o.status]}`}
                       value={o.status}
@@ -61,7 +61,7 @@ export default function AdminOrders({ orders, updateOrderStatus, updatePaymentSt
                       {ORDER_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </td>
-                  <td className="admin-table-actions">
+                  <td className="admin-table-actions" data-label="">
                     <button className="admin-link-btn" onClick={() => setExpanded(expanded === o.id ? null : o.id)}>
                       {expanded === o.id ? "Hide" : "View"}
                     </button>

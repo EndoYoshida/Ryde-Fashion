@@ -3,6 +3,7 @@ import { ShoppingBag, Heart, Search, Menu, User, X, ArrowRight } from "lucide-re
 import logo from "../assets/logo.jpg";
 import { peso } from "../data/products";
 import { SERVER_ORIGIN } from "../api";
+import useMountOnTransition from "../hooks/useMountOnTransition";
 
 const MAX_RESULTS = 6;
 
@@ -96,6 +97,10 @@ export default function Header({ view, setView, goShop, scrollToSection, cartCou
     openProduct?.(product);
     closeSearch();
   };
+
+  // Keeps the mobile dropdown mounted for the duration of its close
+  // animation instead of vanishing instantly — see useMountOnTransition.
+  const { shouldRender: menuShouldRender, closing: menuClosing } = useMountOnTransition(menuOpen, 220);
 
   return (
     <>
@@ -207,8 +212,8 @@ export default function Header({ view, setView, goShop, scrollToSection, cartCou
           </button>
         </div>
       </header>
-      {menuOpen && (
-        <div className="mobile-menu">
+      {menuShouldRender && (
+        <div className={`mobile-menu ${menuClosing ? "closing" : ""}`}>
           {nav.map((n) => (
             <button key={n.id} onClick={() => { goToNav(n.id); setMenuOpen(false); }}>{n.label}</button>
           ))}
