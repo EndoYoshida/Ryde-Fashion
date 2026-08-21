@@ -35,7 +35,14 @@ export const isFirebaseConfigured = isConfigured;
 // Where Firebase should send the browser back to after the person clicks
 // the verification/reset link in the email (its own "continue URL", not
 // this app's API) — i.e. the storefront itself.
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+//
+// FRONTEND_ORIGIN may be a comma-separated list (same env var used for the
+// CORS allow-list in index.js, which does support multiple origins) — but
+// Firebase's continue URL must be a single valid URL, so only the first
+// origin in the list is used here.
+const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || "http://localhost:5173")
+  .split(",")[0]
+  .trim();
 const actionCodeSettings = { url: FRONTEND_ORIGIN, handleCodeInApp: false };
 
 // Generates the actual verification/reset link using Firebase's own
