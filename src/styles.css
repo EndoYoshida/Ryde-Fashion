@@ -619,19 +619,27 @@
      widths put them on one line ("RYDE ADMIN") since there's no room
      to spare for a two-line lockup in the mobile topbar. */
   .admin-brand-text { display:flex; flex-direction:row; align-items:baseline; gap:5px; }
+  /* Hamburger on the left, logo + "RYDE ADMIN" on the right — row-reverse
+     flips the visual order without touching DOM/tab order. */
   .admin-hamburger { display:flex; align-items:center; justify-content:center; }
+  .admin-sidebar .admin-brand { flex-direction:row-reverse; }
 
   .admin-nav-wrap { display:none; }
-  .admin-nav-wrap.open {
+  .admin-nav-wrap.open, .admin-nav-wrap.closing {
     display:flex; flex-direction:column;
     position:absolute; top:100%; left:0; right:0;
     background:var(--ivory); border-bottom:1px solid var(--beige);
     padding:8px 12px 12px; z-index:31;
     box-shadow:0 12px 24px rgba(58,43,40,0.15);
     max-height:calc(100vh - 60px); overflow-y:auto;
+    transform-origin:top;
   }
-  .admin-nav-wrap.open .admin-nav { flex:none; }
-  .admin-nav-wrap.open .admin-nav-item { padding:12px; }
+  .admin-nav-wrap.open { animation:admin-nav-drop .22s ease; }
+  .admin-nav-wrap.closing { animation:admin-nav-close .2s ease forwards; }
+  @keyframes admin-nav-drop { from { opacity:0; transform:translateY(-8px) scaleY(0.94); } to { opacity:1; transform:translateY(0) scaleY(1); } }
+  @keyframes admin-nav-close { from { opacity:1; transform:translateY(0) scaleY(1); } to { opacity:0; transform:translateY(-8px) scaleY(0.94); } }
+  .admin-nav-wrap.open .admin-nav, .admin-nav-wrap.closing .admin-nav { flex:none; }
+  .admin-nav-wrap.open .admin-nav-item, .admin-nav-wrap.closing .admin-nav-item { padding:12px; }
 
   .admin-nav-backdrop {
     display:block; position:fixed; inset:0; top:60px;

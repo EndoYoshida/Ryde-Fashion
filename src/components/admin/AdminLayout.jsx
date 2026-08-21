@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { LayoutDashboard, Package, ClipboardList, Users, Headphones, LogOut, Menu, X } from "lucide-react";
 import logo from "../../assets/logo.jpg";
+import useMountOnTransition from "../../hooks/useMountOnTransition";
 import AdminOverview from "./AdminOverview";
 import AdminProducts from "./AdminProducts";
 import AdminOrders from "./AdminOrders";
@@ -19,6 +20,11 @@ export default function AdminLayout({
   // Only used at mobile widths — the sidebar itself stays a plain always-
   // visible column on desktop (see .admin-hamburger's display:none there).
   const [navOpen, setNavOpen] = useState(false);
+  // Keeps the dropdown's close animation playing instead of the panel
+  // vanishing the instant it's toggled off, same pattern the static
+  // site's mobile menu uses. The wrapper itself always stays mounted
+  // (desktop relies on it via display:contents), only its class changes.
+  const { closing: navClosing } = useMountOnTransition(navOpen, 220);
 
   const nav = [
     { id: "overview", label: "Dashboard", icon: LayoutDashboard },
@@ -64,7 +70,7 @@ export default function AdminLayout({
 
         {navOpen && <div className="admin-nav-backdrop" onClick={() => setNavOpen(false)} />}
 
-        <div className={`admin-nav-wrap ${navOpen ? "open" : ""}`}>
+        <div className={`admin-nav-wrap ${navOpen ? "open" : navClosing ? "closing" : ""}`}>
           <nav className="admin-nav">
             {nav.map((n) => (
               <button key={n.id} className={`admin-nav-item ${tab === n.id ? "active" : ""}`} onClick={() => selectTab(n.id)}>
