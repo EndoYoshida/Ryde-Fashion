@@ -1,6 +1,5 @@
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
-import nodemailer from "nodemailer";
 import { db } from "./db/index.js";
 import {
   verificationEmailHtml,
@@ -15,6 +14,22 @@ import {
   passwordResetLinkHtml,
 } from "./emailTemplates.js";
 
+// --- Outbound (sending) -----------------------------------------------
+// Sending now goes through Resend's HTTP API instead of nodemailer/SMTP.
+// Render's free tier blocks outbound SMTP (ports 465/587/25) to prevent
+// abuse, so a direct connection to smtp.gmail.com reliably times out from
+// a Render-hosted server even with correct credentials. Resend sends over
+// regular HTTPS (port 443), which isn't affected by that restriction.
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+// Must be an address on a domain you've verified in Resend (or, for quick
+// testing before you verify a domain, "onboarding@resend.dev").
+const RESEND_FROM = process.env.RESEND_FROM || "Ryde Fashion <onboarding@resend.dev>";
+
+// --- Inbound (support-ticket polling) ----------------------------------
+// Receiving still uses IMAP against Gmail directly — see pollInbox() below.
+// This is unrelated to the SMTP fix above; if Render also blocks outbound
+// IMAP (port 993) on your plan, that's a separate issue with a separate fix
+// (e.g. moving the poller elsewhere, or switching to a webhook-based inbox).
 const EMAIL_USER = process.env.EMAIL_USER;
 // Gmail displays App Passwords in 4-character groups for readability (e.g.
 // "abcd efgh ijkl mnop"), but the real password is 16 characters with no
@@ -26,29 +41,30 @@ const IMAP_HOST = process.env.IMAP_HOST || "imap.gmail.com";
 const IMAP_PORT = Number(process.env.IMAP_PORT || 993);
 
 export function isEmailConfigured() {
-  return Boolean(EMAIL_USER && EMAIL_APP_PASSWORD);
-}
-
-let transporter = null;
-function getTransporter() {
-  if (!isEmailConfigured()) return null;
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: { user: EMAIL_USER, pass: EMAIL_APP_PASSWORD },
-    });
-  }
-  return transporter;
+  return Boolean(RESEND_API_KEY);
 }
 
 // Generic sender — everything else in this file builds on this.
 // Returns { sent, reason } rather than throwing, so callers can decide
 // how to degrade gracefully when email isn't configured or fails.
 async function sendEmail({ to, subject, text, html }) {
-  const t = getTransporter();
-  if (!t) return { sent: false, reason: "Email isn't configured yet (see server/.env)." };
+  if (!RESEND_API_KEY) return { sent: false, reason: "Email isn't configured yet (see server/.env)." };
   try {
-    await t.sendMail({ from: `"Ryde Fashion" <${EMAIL_USER}>`, to, subject, text, html });
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from: RESEND_FROM, to, subject, text, html }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error("Failed to send email:", res.status, body);
+      return { sent: false, reason: `Resend API error (${res.status})` };
+    }
+
     return { sent: true };
   } catch (err) {
     console.error("Failed to send email:", err.message);
