@@ -54,3 +54,24 @@ export async function downloadDriveImage(fileId) {
   // public_id including folder, so store it as-is.
   return publicId;
 }
+
+// Moves a product's source photo to Drive's Trash (rather than
+// permanently deleting it with files.delete) when the product/row it
+// belongs to is removed — same "clear the sheet row, don't hard-delete
+// it" philosophy as clearProductRowInSheet in sheetsSync.js. Trashed
+// files still count against quota but can be restored from Drive's
+// Trash for ~30 days if a row got removed by mistake, which a
+// permanent delete wouldn't allow.
+// Fire-and-forget by design (see call sites): a Drive hiccup here should
+// never fail or slow down a product/row deletion.
+export async function trashDriveFile(fileId) {
+  if (!fileId) return { trashed: false, reason: "no drive file id" };
+  try {
+    const drive = getDriveClient();
+    await drive.files.update({ fileId, requestBody: { trashed: true } });
+    return { trashed: true };
+  } catch (err) {
+    console.error(`[drive-images] failed to trash file ${fileId}:`, err.message);
+    return { trashed: false, reason: err.message };
+  }
+}

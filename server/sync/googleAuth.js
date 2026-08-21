@@ -4,13 +4,15 @@ import fs from "fs";
 // One service account, two scopes: read/write the product sheet (the
 // pull sync still only *reads* it — the write scope is only ever used to
 // push a single stock number back after a checkout, see
-// sheetsSync.js#writeStockToSheet), and read the Drive files (product
-// photos) it links to. Drive stays read-only — this process never needs
-// to touch your photos, only your Sheet's stock column and your own
-// product database.
+// sheetsSync.js#writeStockToSheet), and read/write the Drive files
+// (product photos) it links to. Drive used to be read-only, but it's now
+// read/write so a deleted product/row can also trash its source photo in
+// Drive (see driveImages.js#trashDriveFile) — the service account still
+// only ever touches files it can already read (the shared product-photos
+// folder), never anything else in the owner's Drive.
 const SCOPES = [
   "https://www.googleapis.com/auth/spreadsheets",
-  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/drive",
 ];
 
 let cachedAuth = null;

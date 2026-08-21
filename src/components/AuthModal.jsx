@@ -125,6 +125,7 @@ export default function AuthModal({ open, onClose, onAuthSuccess }) {
       <div className="auth-panel" onClick={(e) => e.stopPropagation()}>
         <button className="close-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
 
+        <div className="auth-panel-body">
         <div className="auth-mark">
           <img src={logo} alt="Ryde Fashion logo" className="logo-img" />
         </div>
@@ -200,6 +201,7 @@ export default function AuthModal({ open, onClose, onAuthSuccess }) {
             {mode === "login" ? "Create an account" : "Sign in"}
           </button>
         </p>
+        </div>
       </div>
     </div>
   );

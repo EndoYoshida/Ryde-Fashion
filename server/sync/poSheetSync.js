@@ -46,7 +46,15 @@ function registerRowValues(order) {
     order.paymentStatus,
     order.paymentMethod || "",
     order.customer,
-    order.phone || "",
+    // Written with valueInputOption: "USER_ENTERED" below, which makes Sheets
+    // parse this exactly like manual keyboard entry. A phone number like
+    // "+63 917 123 4567" starts with "+", so Sheets tries to read it as a
+    // formula and shows a parse error; a plain "09171234567" gets read as a
+    // number and silently loses its leading 0. A leading apostrophe is the
+    // standard Sheets way to force a value to be treated as literal text —
+    // it's stripped from what's displayed/stored, it just suppresses the
+    // formula/number auto-detection.
+    order.phone ? `'${order.phone}` : "",
     order.email,
     order.address || "",
     order.total,

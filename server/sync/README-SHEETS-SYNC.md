@@ -40,8 +40,14 @@ and doesn't require enabling billing for read-only Sheets/Drive access.
   `stock` cells after a checkout, in addition to reading the rest of the
   sheet).
 - If your product photos are in a Drive folder, share that folder with
-  the same email (Viewer access is fine here — Drive is always read-only).
-  Individual files work too, but a shared folder is easier to maintain.
+  the same email, with **Editor** access (not just Viewer — when a
+  product/row is deleted, the sync also trashes that product's source
+  photo in Drive, so it needs permission to modify files in the folder,
+  not just read them). Individual files work too, but a shared folder is
+  easier to maintain.
+  - Deleted photos are moved to Drive's Trash, not permanently deleted —
+    they're recoverable from Trash for ~30 days if a row gets removed by
+    mistake.
 
 ## 3. Set up the Sheet
 

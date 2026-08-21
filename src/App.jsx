@@ -218,6 +218,13 @@ export default function App() {
     setArea("store");
     setView("home");
   };
+  // Used only for AdminLayout's "Log out & return to store" button —
+  // AdminLogin's own "Back" button calls handleLeaveAdmin directly since
+  // there's no active session to confirm losing at that point.
+  const handleAdminLogoutClick = () => {
+    if (!window.confirm("Are you sure you want to log out?")) return;
+    handleLeaveAdmin();
+  };
 
   // --- Admin: products ---
   const addProduct = async (product) => {
@@ -324,6 +331,7 @@ export default function App() {
       .catch((err) => console.error("Failed to load wishlist:", err));
   };
   const handleCustomerLogout = () => {
+    if (!window.confirm("Are you sure you want to log out?")) return;
     api.logoutCustomer();
     api.setCustomerToken(null);
     localStorage.removeItem("rydeCustomerToken");
@@ -445,7 +453,7 @@ export default function App() {
           <div className="app-loading">Loading dashboard&hellip;</div>
         ) : (
           <AdminLayout
-            onLeaveAdmin={handleLeaveAdmin}
+            onLeaveAdmin={handleAdminLogoutClick}
             products={products} addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct}
             uploadImages={uploadImages} deleteImage={deleteImage}
             orders={orders} updateOrderStatus={updateOrderStatus} updatePaymentStatus={updatePaymentStatus}

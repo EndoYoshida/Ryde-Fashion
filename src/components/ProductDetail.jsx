@@ -68,6 +68,7 @@ export default function ProductDetail({ product, onClose, addToCart, toggleWish,
     <div className="overlay" onClick={onClose}>
       <div className="detail-panel" onClick={(e) => e.stopPropagation()}>
         <button className="close-btn" onClick={onClose} aria-label="Close"><X size={20} /></button>
+        <div className="detail-panel-body">
         <div className="detail-grid">
           <div className="detail-images">
             <div
@@ -178,6 +179,7 @@ export default function ProductDetail({ product, onClose, addToCart, toggleWish,
             </div>
           </div>
         )}
+        </div>
       </div>
 
       {lightboxOpen && mainImgFullSrc && (

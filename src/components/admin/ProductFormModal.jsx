@@ -109,6 +109,7 @@ export default function ProductFormModal({ product, onClose, onSave, uploadImage
     <div className="overlay center" onClick={onClose}>
       <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
         <button className="close-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        <div className="admin-modal-body">
         <h3>{product ? "Edit Product" : "Add New Product"}</h3>
         <form onSubmit={handleSubmit} className="admin-form">
 
@@ -197,6 +198,7 @@ export default function ProductFormModal({ product, onClose, onSave, uploadImage
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

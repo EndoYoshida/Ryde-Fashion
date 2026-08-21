@@ -1,7 +1,7 @@
 import { db } from "../db/index.js";
 import { deleteCloudinaryImage } from "../upload.js";
 import { getSheetsClient, isSheetsSyncConfigured } from "./googleAuth.js";
-import { extractDriveFileId, downloadDriveImage } from "./driveImages.js";
+import { extractDriveFileId, downloadDriveImage, trashDriveFile } from "./driveImages.js";
 import { rowToProduct, notifyWishlistersBackInStock, notifySubscribersNewProduct } from "../routes/products.js";
 
 // Sheet tab + range to read. Override via env if your tab isn't named
@@ -418,10 +418,14 @@ async function deleteMissingSkus(seenSkus) {
 
   let deleted = 0;
   for (const { id } of toDelete) {
-    const images = await db.prepare("SELECT filename FROM product_images WHERE product_id = ?").all(id);
+    const images = await db.prepare("SELECT filename, drive_file_id FROM product_images WHERE product_id = ?").all(id);
     await db.prepare("DELETE FROM products WHERE id = ?").run(id); // product_images cascades
-    for (const { filename } of images) {
+    for (const { filename, drive_file_id } of images) {
       deleteCloudinaryImage(filename);
+      // Also trash the source photo in Drive, so a row removed from the
+      // sheet doesn't leave its photo sitting in the folder forever.
+      // Fire-and-forget, same contract as the rest of this sync.
+      if (drive_file_id) trashDriveFile(drive_file_id);
     }
     deleted++;
   }

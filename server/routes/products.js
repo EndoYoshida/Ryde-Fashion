@@ -5,6 +5,7 @@ import { requireAdmin } from "../auth.js";
 import { requireCustomer } from "../customerAuth.js";
 import { sendBackInStockEmail, sendNewProductEmail } from "../email.js";
 import { writeProductToSheet, clearProductRowInSheet } from "../sync/sheetsSync.js";
+import { trashDriveFile } from "../sync/driveImages.js";
 import { asyncHandler } from "../asyncHandler.js";
 
 // Fire-and-forget push of a just-created/edited product into the Google
@@ -175,14 +176,18 @@ router.put("/:id", requireAdmin, asyncHandler(async (req, res) => {
 // DELETE /api/products/:id
 router.delete("/:id", requireAdmin, asyncHandler(async (req, res) => {
   const existing = await db.prepare("SELECT sku FROM products WHERE id = ?").get(req.params.id);
-  const images = await db.prepare("SELECT filename FROM product_images WHERE product_id = ?").all(req.params.id);
+  const images = await db.prepare("SELECT filename, drive_file_id FROM product_images WHERE product_id = ?").all(req.params.id);
   const result = await db.prepare("DELETE FROM products WHERE id = ?").run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: "Product not found" });
 
   // product_images rows cascade-delete automatically; also remove the
-  // actual files from Cloudinary so storage doesn't accumulate orphans.
+  // actual files from Cloudinary so storage doesn't accumulate orphans,
+  // and trash the source photo in Drive for any image that came from
+  // there (drive_file_id is only set for sheet/Drive-synced images —
+  // photos an admin uploaded by hand have no Drive counterpart).
   for (const img of images) {
     deleteCloudinaryImage(img.filename);
+    if (img.drive_file_id) trashDriveFile(img.drive_file_id);
   }
 
   // Mirror the delete into the Google Sheet too — blank its row so a
@@ -228,6 +233,7 @@ router.delete("/:id/images/:imageId", requireAdmin, asyncHandler(async (req, res
 
   await db.prepare("DELETE FROM product_images WHERE id = ?").run(req.params.imageId);
   deleteCloudinaryImage(image.filename);
+  if (image.drive_file_id) trashDriveFile(image.drive_file_id);
 
   res.json({ images: await getImages(req.params.id) });
 }));
