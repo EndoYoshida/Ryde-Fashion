@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronDown } from "lucide-react";
 import { CATEGORIES, peso } from "../data/products";
 import ProductCard from "./ProductCard";
 
@@ -7,6 +7,7 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
   const [sort, setSort] = useState("newest");
   const [priceMax, setPriceMax] = useState(16000);
   const [availOnly, setAvailOnly] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(true);
 
   const filtered = useMemo(() => {
     let list = products.filter((p) => p.price <= priceMax);
@@ -36,38 +37,50 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
       </div>
       <div className="browse-body">
         <aside className="filters">
-          <div className="filter-title"><SlidersHorizontal size={14} /> Filters</div>
-          {tagFilter && (
-            <div className="filter-group">
-              <h5>Showing</h5>
-              <button className="filter-chip active" onClick={() => setTagFilter(null)}>
-                {tagFilter === "New" ? "New Arrivals" : "Best Sellers"} &times;
-              </button>
+          <button
+            type="button"
+            className="filter-title"
+            onClick={() => setFiltersOpen((o) => !o)}
+            aria-expanded={filtersOpen}
+          >
+            <SlidersHorizontal size={14} /> Filters
+            <ChevronDown size={15} className={`filter-chevron ${filtersOpen ? "open" : ""}`} />
+          </button>
+          <div className={`filter-collapse ${filtersOpen ? "open" : ""}`}>
+            <div className="filter-collapse-inner">
+              {tagFilter && (
+                <div className="filter-group">
+                  <h5>Showing</h5>
+                  <button className="filter-chip active" onClick={() => setTagFilter(null)}>
+                    {tagFilter === "New" ? "New Arrivals" : "Best Sellers"} &times;
+                  </button>
+                </div>
+              )}
+              <div className="filter-group">
+                <h5>Category</h5>
+                <button className={`filter-chip ${!categoryFilter ? "active" : ""}`} onClick={() => setCategoryFilter(null)}>All</button>
+                {CATEGORIES.map((c) => (
+                  <button
+                    key={c.id}
+                    className={`filter-chip ${categoryFilter === c.id ? "active" : ""}`}
+                    style={categoryFilter === c.id ? { color: c.color } : undefined}
+                    onClick={() => setCategoryFilter(c.id)}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+              <div className="filter-group">
+                <h5>Max price: {peso(priceMax)}</h5>
+                <input type="range" min="1500" max="16000" step="500" value={priceMax} onChange={(e) => setPriceMax(Number(e.target.value))} className="range" />
+              </div>
+              <div className="filter-group">
+                <label className="checkbox-row">
+                  <input type="checkbox" checked={availOnly} onChange={(e) => setAvailOnly(e.target.checked)} />
+                  In stock only
+                </label>
+              </div>
             </div>
-          )}
-          <div className="filter-group">
-            <h5>Category</h5>
-            <button className={`filter-chip ${!categoryFilter ? "active" : ""}`} onClick={() => setCategoryFilter(null)}>All</button>
-            {CATEGORIES.map((c) => (
-              <button
-                key={c.id}
-                className={`filter-chip ${categoryFilter === c.id ? "active" : ""}`}
-                style={categoryFilter === c.id ? { color: c.color } : undefined}
-                onClick={() => setCategoryFilter(c.id)}
-              >
-                {c.name}
-              </button>
-            ))}
-          </div>
-          <div className="filter-group">
-            <h5>Max price: {peso(priceMax)}</h5>
-            <input type="range" min="1500" max="16000" step="500" value={priceMax} onChange={(e) => setPriceMax(Number(e.target.value))} className="range" />
-          </div>
-          <div className="filter-group">
-            <label className="checkbox-row">
-              <input type="checkbox" checked={availOnly} onChange={(e) => setAvailOnly(e.target.checked)} />
-              In stock only
-            </label>
           </div>
         </aside>
         <div className="browse-main">

@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { Lock, User, Loader2, ShieldCheck } from "lucide-react";
+import { User, Loader2, ShieldCheck } from "lucide-react";
 import logo from "../../assets/logo.jpg";
 import * as api from "../../api";
+import PasswordField from "../ui/PasswordField";
 
 export default function AdminLogin({ onLoginSuccess, onBack }) {
   const [username, setUsername] = useState("");
@@ -55,16 +56,12 @@ export default function AdminLogin({ onLoginSuccess, onBack }) {
                   autoFocus
                 />
               </div>
-              <div className="input-wrap">
-                <Lock size={15} />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Password"
-                  autoComplete="current-password"
-                />
-              </div>
+              <PasswordField
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                autoComplete="current-password"
+              />
             </>
           ) : (
             <>

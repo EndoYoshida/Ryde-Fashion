@@ -100,6 +100,11 @@ export default function Header({ view, setView, goShop, scrollToSection, cartCou
   return (
     <>
       <div className="announce">Free shipping on orders over &#8369;5,000 &nbsp;&middot;&nbsp; 100% Authenticity Guarantee &nbsp;&middot;&nbsp; Imported from the U.S., Japan &amp; Canada</div>
+      {/* Header and the mobile dropdown are wrapped together so they scroll
+          (and stick) as one unit — otherwise the dropdown renders at its
+          original document position instead of following the sticky header
+          once the page has been scrolled. */}
+      <div className="site-header-wrap">
       <header className="site-header">
         <button className="icon-btn mobile-only" onClick={() => setMenuOpen((m) => !m)} aria-label="Menu">
           <Menu size={20} />
@@ -209,6 +214,7 @@ export default function Header({ view, setView, goShop, scrollToSection, cartCou
           ))}
         </div>
       )}
+      </div>
     </>
   );
 }

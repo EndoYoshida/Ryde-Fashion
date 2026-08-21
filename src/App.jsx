@@ -99,10 +99,11 @@ export default function App() {
 
   // Admin auth. Orders/customers/tickets contain private customer data,
   // so the backend requires a valid session token for them — nothing
-  // here is fetched until an admin actually logs in. The token itself
-  // lives in sessionStorage (not localStorage) so it clears when the
-  // browser tab closes, not indefinitely.
-  const [adminToken, setAdminTokenState] = useState(() => sessionStorage.getItem("rydeAdminToken"));
+  // here is fetched until an admin actually logs in. Unlike the customer
+  // token below, this is kept in plain component state only (never
+  // written to session/local storage), so a page refresh always drops
+  // back to the login screen rather than silently staying signed in.
+  const [adminToken, setAdminTokenState] = useState(null);
   const [adminDataLoading, setAdminDataLoading] = useState(false);
 
   // Customer accounts. Unlike admin, customers expect to stay signed in
@@ -138,7 +139,6 @@ export default function App() {
   useEffect(() => {
     api.setAdminUnauthorizedHandler(() => {
       setAdminTokenState(null);
-      sessionStorage.removeItem("rydeAdminToken");
     });
     api.setCustomerUnauthorizedHandler(() => {
       setCustomerTokenState(null);
@@ -147,9 +147,9 @@ export default function App() {
     });
   }, []);
 
-  // Loads orders/customers/tickets once an admin session exists —
-  // either right after logging in, or on refresh if a token was still
-  // saved in this tab's sessionStorage.
+  // Loads orders/customers/tickets once an admin session exists, i.e.
+  // right after logging in (this never fires from a refresh, since
+  // adminToken isn't persisted).
   useEffect(() => {
     if (!adminToken) return;
     api.setAdminToken(adminToken);
@@ -201,7 +201,6 @@ export default function App() {
   }, [customerToken]);
 
   const handleAdminLogin = (token) => {
-    sessionStorage.setItem("rydeAdminToken", token);
     setAdminTokenState(token);
     window.history.pushState(null, "", "/admin");
   };
@@ -211,7 +210,6 @@ export default function App() {
   const handleLeaveAdmin = () => {
     if (adminToken) api.logoutAdmin();
     api.setAdminToken(null);
-    sessionStorage.removeItem("rydeAdminToken");
     setAdminTokenState(null);
     setOrders([]);
     setCustomers([]);
