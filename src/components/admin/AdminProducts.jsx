@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { Plus, Pencil, Trash2, Search } from "lucide-react";
 import { peso, STATUS_LABEL, CATEGORIES, STATUS_OPTIONS } from "../../data/products";
 import ProductFormModal from "./ProductFormModal";
@@ -15,6 +15,32 @@ const SORT_OPTIONS = [
   { id: "stock-desc", label: "Stock (High to Low)", compare: (a, b) => Number(b.stock) - Number(a.stock) },
 ];
 
+// Scrolls its text left only when the text actually doesn't fit the
+// box — measured via scrollWidth vs the visible container width,
+// re-checked on resize, rather than guessing from character count.
+function MarqueeText({ text }) {
+  const outerRef = useRef(null);
+  const innerRef = useRef(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      if (outerRef.current && innerRef.current) {
+        setOverflowing(innerRef.current.scrollWidth > outerRef.current.clientWidth + 1);
+      }
+    };
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [text]);
+
+  return (
+    <span ref={outerRef} className={`admin-marquee${overflowing ? " scrolling" : ""}`}>
+      <span ref={innerRef}>{text}</span>
+    </span>
+  );
+}
+
 export default function AdminProducts({ products, addProduct, updateProduct, deleteProduct, uploadImages, deleteImage }) {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -23,6 +49,23 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+
+  // Mobile-only floating Add Product button: hide it while scrolling
+  // down (out of the way of content), bring it back on scroll up. Has
+  // no visible effect on desktop, where this button stays inline in
+  // the filter row instead of floating.
+  const [fabHidden, setFabHidden] = useState(false);
+  const lastScrollY = useRef(0);
+  useEffect(() => {
+    lastScrollY.current = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      setFabHidden(y > lastScrollY.current && y > 80);
+      lastScrollY.current = y;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   const filtered = useMemo(() => {
     let list = products;
@@ -105,7 +148,10 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
           </button>
         )}
 
-        <button className="btn-gold admin-filter-add-btn" onClick={openAdd}><Plus size={16} /> Add Product</button>
+        <button
+          className={`btn-gold admin-filter-add-btn${fabHidden ? " fab-hidden" : ""}`}
+          onClick={openAdd}
+        ><Plus size={16} /> Add Product</button>
       </div>
 
       <div className="admin-table-wrap">
@@ -134,9 +180,7 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
                     </div>
                   </td>
                   <td className="admin-table-name" data-label="Product">
-                    <span className={`admin-marquee${p.name.length > 24 ? " scrolling" : ""}`}>
-                      <span>{p.name}</span>
-                    </span>
+                    <MarqueeText text={p.name} />
                   </td>
                   <td data-label="Brand">{p.brand}</td>
                   <td className="admin-capitalize" data-label="Category">{p.category}</td>

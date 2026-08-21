@@ -463,11 +463,11 @@
   .admin-table td:last-child { border-bottom:none; }
   .admin-table td[data-label]:not([data-label=""])::before { content:attr(data-label); font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--ink-soft); text-align:left; flex-shrink:0; }
   .admin-table td[data-label=""] { justify-content:flex-start; }
-  /* Edit/delete used to be pinned to the top-right corner of the card,
-     overlapping the thumbnail row — moved back into normal flow as its
-     own row at the bottom of the card, centered, so it reads as a
-     footer action rather than sitting awkwardly in the corner. */
-  .admin-products-table .admin-table-actions { justify-content:center; padding:10px 0 2px; }
+  /* Edit/delete moved back to the top-left area (not top-right), nudged
+     down and past the thumbnail so it doesn't sit flush in the very
+     corner or overlap the product image. */
+  .admin-products-table .admin-table-actions { position:absolute; top:26px; left:56px; padding:0; border-bottom:none; width:auto; justify-content:flex-start; }
+  .admin-products-table tr td:nth-last-child(2) { border-bottom:none; }
 
   /* Long product names were getting squeezed into the narrow value side
      of the card row. Instead of wrapping/truncating, scroll the text
@@ -484,6 +484,13 @@
   }
   .admin-table tr.admin-expand-row { background:var(--cream); border-color:var(--beige); margin-top:-12px; padding:2px 14px 10px; }
   .admin-table .admin-expand-row td { display:block; text-align:left; padding:8px 0; }
+
+  /* Add Product becomes a floating action button on mobile, styled to
+     match the rest of the admin (gold, same font/spacing) instead of
+     living inline in the filter row — it stays fixed in the corner and
+     tucks itself away while scrolling down, reappearing on scroll up. */
+  .admin-filter-add-btn { position:fixed; right:18px; bottom:22px; z-index:40; margin-left:0; border-radius:50px; box-shadow:0 8px 20px rgba(0,0,0,.28); transition:transform .25s ease, opacity .25s ease; }
+  .admin-filter-add-btn.fab-hidden { transform:translateY(140%); opacity:0; pointer-events:none; }
 }
 
 /* ============ ADMIN DASHBOARD ============ */
