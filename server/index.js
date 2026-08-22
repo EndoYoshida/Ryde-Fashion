@@ -22,6 +22,7 @@ import customersRouter from "./routes/customers.js";
 import ticketsRouter from "./routes/tickets.js";
 import newsletterRouter from "./routes/newsletter.js";
 import wishlistRouter from "./routes/wishlist.js";
+import messengerRouter from "./routes/messenger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -81,7 +82,14 @@ app.use(cors({
     callback(new Error(`Origin "${origin}" is not allowed by CORS`));
   },
 }));
-app.use(express.json({ limit: "1mb" }));
+// Meta's webhook signature check needs the exact raw bytes of the request
+// body (see routes/messenger.js verifySignature) — express.json() only
+// exposes the parsed object by default, so this `verify` hook stashes the
+// raw buffer alongside it before parsing.
+app.use(express.json({
+  limit: "1mb",
+  verify: (req, res, buf) => { req.rawBody = buf; },
+}));
 // Product/proof images are now served directly from Cloudinary's own CDN
 // URLs (see upload.js) rather than from this server, since Render's disk
 // is ephemeral — no local /uploads static route needed anymore.
@@ -103,6 +111,7 @@ app.use("/api/customers", customersRouter);
 app.use("/api/tickets", ticketsRouter);
 app.use("/api/newsletter", newsletterRouter);
 app.use("/api/wishlist", wishlistRouter);
+app.use("/api/messenger", messengerRouter);
 
 const POLL_INTERVAL_MS = 60 * 1000; // check for new support emails every minute
 
