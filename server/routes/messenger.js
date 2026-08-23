@@ -48,6 +48,17 @@ const faqImage = (filename) => `${APP_ORIGIN}/public/messenger/${filename}`;
 // yourself every so often (or whenever you're expecting handoffs) to keep
 // that window open.
 const OWNER_PSID = process.env.OWNER_PSID;
+// OWNER_NAME - told to the CUSTOMER so they know who's about to reply to
+// them ("Connecting you now with Ronald, the shop owner!") instead of a
+// vague "someone will follow up." Set this to whatever name/role you want
+// customers to see.
+const OWNER_NAME = process.env.OWNER_NAME || "the shop owner";
+// HANDOFF_MINUTES - once a customer is connected to a human, the bot goes
+// quiet for that customer for this many minutes (so it doesn't talk over
+// the owner while they're replying manually in the Page Inbox), then
+// automatically resumes answering that customer itself. Raise this if the
+// owner tends to take longer to get to messages.
+const HANDOFF_MINUTES = Number(process.env.HANDOFF_MINUTES) || 60;
 // STORE_NAME - shown in the bot's own replies so it can refer to itself
 // ("Hi, this is Ella from RydeFashion!") instead of talking like a
 // generic script. Change this if the shop's display name changes.
@@ -196,9 +207,10 @@ const FAQS = [
     id: "human_agent",
     keywords: ["human agent", "customer service", "totoong tao", "customer support", "talk to a person", "talk to someone", "human po", "makausap ang tao"],
     // NOTE: this text is grounding for compose (see composeReply below) —
-    // the actual owner notification happens in the webhook handler via
-    // notifyOwner(), triggered whenever this faq_id is matched.
-    answer: `Sure — I've let our team know and the shop owner will follow up with you here shortly! 🙏 Feel free to describe what you need in the meantime.`,
+    // the actual owner notification + handoff pause happens in the
+    // webhook handler via notifyOwner()/startHandoff(), triggered
+    // whenever this faq_id is matched.
+    answer: `Sure — connecting you now with ${OWNER_NAME}! They'll be the one replying here from now on. 🙏`,
   },
 ];
 
@@ -215,7 +227,7 @@ function matchFaq(text) {
 // this bot's message volume — it just means a streak doesn't survive a
 // deploy, not a correctness problem.
 const HUMAN_HANDOFF_THRESHOLD = 2;
-const HUMAN_HANDOFF_MESSAGE = `I might be having trouble understanding — I've flagged this for our team and someone will follow up with you shortly! 🙏 Feel free to describe what you need in the meantime.`;
+const HUMAN_HANDOFF_MESSAGE = `I might be having trouble understanding — let me connect you with ${OWNER_NAME} instead! They'll be the one replying here from now on. 🙏`;
 const failCounts = new Map(); // senderId -> consecutive failed-to-help count
 
 function recordFailure(senderId) {
@@ -273,6 +285,29 @@ async function notifyOwner(senderId, customerText) {
     OWNER_PSID,
     `🔔 A customer wants to talk to you directly.\n\nTheir last message: "${preview}"\n\nReply here: ${inboxLink(senderId)}`
   );
+}
+
+// --- Handoff pause ------------------------------------------------------
+// Once a customer is connected to the owner, the bot stops auto-replying
+// to THAT customer for a while — otherwise it'd keep answering over the
+// owner's manual replies in the Page Inbox, which would be confusing
+// (and undercut "you're now talking to a real person"). Resumes on its
+// own after HANDOFF_MINUTES so a customer isn't stuck waiting forever if
+// the owner doesn't get to it. In-memory, same redeploy caveat as above.
+const handoffUntil = new Map(); // senderId -> ms timestamp when bot resumes
+
+function startHandoff(senderId) {
+  handoffUntil.set(senderId, Date.now() + HANDOFF_MINUTES * 60 * 1000);
+}
+
+function isHandoffActive(senderId) {
+  const until = handoffUntil.get(senderId);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    handoffUntil.delete(senderId);
+    return false;
+  }
+  return true;
 }
 
 // --- AI understanding layer (Gemini) ---------------------------------
@@ -531,6 +566,15 @@ router.post(
         // setup note near the top of this file.
         console.log(`[messenger] incoming message from PSID ${senderId}: ${text}`);
 
+        // Customer is currently connected to the owner — stay quiet so
+        // the bot doesn't talk over a real reply. Still logged above so
+        // nothing is lost, and history keeps recording so the bot has
+        // context once it resumes.
+        if (isHandoffActive(senderId)) {
+          pushHistory(senderId, "customer", text);
+          continue;
+        }
+
         try {
           pushHistory(senderId, "customer", text);
 
@@ -573,7 +617,10 @@ router.post(
                 await sendImage(senderId, imageUrl);
               }
               await replyNaturally(faq.answer);
-              if (faq.id === "human_agent") await notifyOwner(senderId, text);
+              if (faq.id === "human_agent") {
+                await notifyOwner(senderId, text);
+                startHandoff(senderId);
+              }
               continue;
             }
           }
@@ -611,8 +658,9 @@ router.post(
               );
               if (failCount >= HUMAN_HANDOFF_THRESHOLD) {
                 await notifyOwner(senderId, text);
+                startHandoff(senderId);
                 await replyNaturally(
-                  `You're having trouble helping with this. Let them know you've flagged it for the shop owner, who'll follow up here shortly.`,
+                  `You're having trouble helping with this. Let them know you're connecting them with ${OWNER_NAME} now, who'll take over here.`,
                   HUMAN_HANDOFF_MESSAGE
                 );
                 resetFailure(senderId);
@@ -671,7 +719,10 @@ router.post(
               }
               await sendMessage(senderId, faq.answer);
               pushHistory(senderId, "bot", faq.answer);
-              if (faq.id === "human_agent") await notifyOwner(senderId, text);
+              if (faq.id === "human_agent") {
+                await notifyOwner(senderId, text);
+                startHandoff(senderId);
+              }
               continue;
             }
             const fallbackWords = extractSearchWords(text);
@@ -698,12 +749,13 @@ router.post(
             }
             if (failCount >= HUMAN_HANDOFF_THRESHOLD) {
               await notifyOwner(senderId, text);
+              startHandoff(senderId);
               if (usedFallback) {
                 await sendMessage(senderId, HUMAN_HANDOFF_MESSAGE);
                 pushHistory(senderId, "bot", HUMAN_HANDOFF_MESSAGE);
               } else {
                 await replyNaturally(
-                  `You're having trouble helping with this. Let them know you've flagged it for the shop owner, who'll follow up here shortly.`,
+                  `You're having trouble helping with this. Let them know you're connecting them with ${OWNER_NAME} now, who'll take over here.`,
                   HUMAN_HANDOFF_MESSAGE
                 );
               }
