@@ -27,7 +27,7 @@ const APP_SECRET = process.env.FB_APP_SECRET;
 // they change). If you burst past it, calls fail and this file falls back
 // to the keyword matcher automatically, so the bot won't go silent.
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = "gemini-2.5-flash"; // free tier, stable — avoid preview/newest model names, they get renamed often
+const GEMINI_MODEL = "gemini-3.6-flash"; // free tier — Google's current-gen Flash model as of Aug 2026
 // Same pattern emailTemplates.js uses for building absolute URLs to files
 // in /public — Messenger needs a real public URL, not a relative path.
 const APP_ORIGIN = process.env.APP_ORIGIN || "http://localhost:4000";
