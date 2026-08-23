@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { db } from "../db/index.js";
 import { asyncHandler } from "../asyncHandler.js";
 import { cloudinaryUrl } from "../upload.js";
+import { findMatchingProduct, isConfidentMatch } from "../imageMatch.js";
 
 const router = Router();
 
@@ -272,6 +273,34 @@ function recordFailure(senderId) {
 function resetFailure(senderId) {
   failCounts.delete(senderId);
 }
+
+// --- "Waiting on the customer to name an item" flag ---------------------
+// True whenever the bot's last move was asking the customer to name a
+// product/brand (either because a text question named nothing specific,
+// or because they sent a photo with no name attached). Used to avoid
+// asking twice in a row when a photo and an under-specified text question
+// arrive back-to-back in either order — see handling in the webhook loop
+// and the product_search branches below. Cleared whenever something
+// actually resolves (a product/FAQ/order is found), same as failCounts.
+const pendingClarification = new Map(); // senderId -> boolean
+
+function setPendingClarification(senderId) {
+  pendingClarification.set(senderId, true);
+}
+
+function clearPendingClarification(senderId) {
+  pendingClarification.delete(senderId);
+}
+
+function isPendingClarification(senderId) {
+  return pendingClarification.get(senderId) === true;
+}
+
+// Narrower flag than pendingClarification above: specifically "the last
+// unresolved thing was a photo with no item name attached," so later
+// replies can say "I saw your photo" rather than a generic "which
+// category" line. Cleared at the same points pendingClarification is.
+const photoAwaitingName = new Map(); // senderId -> boolean
 
 // --- Short conversation memory ---------------------------------------
 // A few recent turns per customer, so replies feel like an ongoing chat
@@ -689,7 +718,8 @@ router.post(
       for (const event of entry.messaging || []) {
         const senderId = event.sender?.id;
         const text = event.message?.text;
-        if (!senderId || !text) continue; // skip non-text (stickers, etc.)
+        const hasImage = (event.message?.attachments || []).some((a) => a.type === "image");
+        if (!senderId || (!text && !hasImage)) continue; // skip non-text, non-image (stickers, etc.)
 
         // Skip "echo" events — Meta replays messages the PAGE itself sent
         // (including this bot's own replies, and any manual replies you
@@ -706,19 +736,75 @@ router.post(
 
         // Also doubles as how you find your own OWNER_PSID — see the
         // setup note near the top of this file.
-        console.log(`[messenger] incoming message from PSID ${senderId}: ${text}`);
+        console.log(`[messenger] incoming message from PSID ${senderId}: ${text || "(photo, no text)"}`);
 
         // Customer is currently connected to the owner — stay quiet so
         // the bot doesn't talk over a real reply. Still logged above so
         // nothing is lost, and history keeps recording so the bot has
         // context once it resumes.
         if (isHandoffActive(senderId)) {
-          pushHistory(senderId, "customer", text);
+          if (text) pushHistory(senderId, "customer", text);
+          if (hasImage) pushHistory(senderId, "customer", "[sent a photo of an item]");
+          continue;
+        }
+
+        // --- Image-only message (no text) --------------------------------
+        // Try to match the photo against the catalog first (see
+        // imageMatch.js — pgvector nearest-neighbor over Gemini image
+        // embeddings). Per your call: only act on it when the match is
+        // confident; anything less just falls through to asking the
+        // customer to name the item, same as before image matching
+        // existed. This also degrades safely if pgvector/embeddings
+        // aren't set up yet (imageMatch throws, caught below) or if no
+        // catalog photo has an embedding at all (findMatchingProduct
+        // returns null) — either way, same "ask for the name" fallback.
+        if (hasImage && !text) {
+          pushHistory(senderId, "customer", "[sent a photo of an item]");
+
+          const imageUrl = (event.message?.attachments || []).find((a) => a.type === "image")?.payload?.url;
+          const match = imageUrl
+            ? await findMatchingProduct(imageUrl).catch((err) => {
+                console.error("[messenger] image match failed:", err.message);
+                return null;
+              })
+            : null;
+
+          if (match && isConfidentMatch(match.distance)) {
+            // Treat it exactly like a resolved text-based product search —
+            // same downstream state (focus product, failure/clarification
+            // reset) so a follow-up like "magkano?" works the same way it
+            // would after a normal search.
+            resetFailure(senderId);
+            clearPendingClarification(senderId);
+            photoAwaitingName.delete(senderId);
+            setFocusProduct(senderId, match.product);
+
+            const intro = `That looks like this one — here's what we have: 👇`;
+            await sendMessage(senderId, intro);
+            pushHistory(senderId, "bot", intro);
+
+            const images = await findFirstImages([match.product.id]);
+            const photoUrl = images.get(match.product.id);
+            if (photoUrl) await sendImage(senderId, photoUrl);
+            const line = formatReplyLine(match.product);
+            await sendMessage(senderId, line);
+            pushHistory(senderId, "bot", line);
+            continue;
+          }
+
+          if (!isPendingClarification(senderId)) {
+            const msg = `Got your photo! Could you tell me the item name or brand so I can check stock for you? 📸`;
+            setPendingClarification(senderId);
+            photoAwaitingName.set(senderId, true);
+            await sendMessage(senderId, msg);
+            pushHistory(senderId, "bot", msg);
+          }
           continue;
         }
 
         try {
           pushHistory(senderId, "customer", text);
+          if (hasImage) pushHistory(senderId, "customer", "[sent a photo of an item along with that message]");
 
           // Turns a fact (or an instruction describing what to say) into
           // an actual natural-language reply in the customer's own
@@ -762,6 +848,8 @@ router.post(
             const faq = matchFaq(text);
             if (faq) {
               resetFailure(senderId);
+              clearPendingClarification(senderId);
+              photoAwaitingName.delete(senderId);
               for (const imageUrl of faq.images || []) {
                 await sendImage(senderId, imageUrl);
               }
@@ -776,6 +864,7 @@ router.post(
             const fallbackWords = extractSearchWords(text);
             if (fallbackWords.length === 0) {
               const msg = `We carry bags, watches, apparel, and accessories 👜⌚👕 — which category or brand are you looking for?`;
+              setPendingClarification(senderId);
               await sendMessage(senderId, msg);
               pushHistory(senderId, "bot", msg);
               continue;
@@ -796,6 +885,8 @@ router.post(
               continue;
             }
             resetFailure(senderId);
+            clearPendingClarification(senderId);
+            photoAwaitingName.delete(senderId);
             if (products.length === 1) setFocusProduct(senderId, products[0]);
             const images = await findFirstImages(products.map((p) => p.id));
             for (const p of products) {
@@ -885,9 +976,13 @@ router.post(
                   .all(focus.id);
               } else if (words.length === 0) {
                 anyFailed = true;
+                setPendingClarification(senderId);
                 factsParts.push(
-                  `They asked about a product/price/stock but named nothing specific, and nothing was discussed yet either. ` +
-                  `Tell them the shop carries bags, watches, apparel, and accessories, and ask which category or brand.`
+                  photoAwaitingName.get(senderId)
+                    ? `They asked about a product/price/stock but named nothing specific, and they recently sent a photo of an item without naming it — ` +
+                      `acknowledge you saw the photo and ask them to tell you the item name or brand so you can check it.`
+                    : `They asked about a product/price/stock but named nothing specific, and nothing was discussed yet either. ` +
+                      `Tell them the shop carries bags, watches, apparel, and accessories, and ask which category or brand.`
                 );
                 continue;
               } else {
@@ -958,6 +1053,8 @@ router.post(
             }
           } else if (anyResolved) {
             resetFailure(senderId);
+            clearPendingClarification(senderId);
+            photoAwaitingName.delete(senderId);
           }
         } catch (err) {
           console.error("Messenger auto-reply failed:", err);
