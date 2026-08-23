@@ -220,7 +220,7 @@ const FAQS = [
     // the actual owner notification + handoff pause happens in the
     // webhook handler via notifyOwner()/startHandoff(), triggered
     // whenever this faq_id is matched.
-    answer: `Sure — connecting you now with ${OWNER_NAME}! They'll be the one replying here from now on. 🙏`,
+    answer: `Sure po! I-stop ko muna ang automated replies. Ipapasa ko po kayo kay ${OWNER_NAME}. Please wait po lang. 😊`,
   },
 ];
 
@@ -340,6 +340,16 @@ function focusProductText(senderId) {
   return p ? `${p.brand} ${p.name} (id ${p.id})` : null;
 }
 
+// Remembers the most recent order a customer successfully asked about in
+// this conversation, so a human-handoff notification can include it (e.g.
+// "Order #RYDE-10235 · Processing") without re-querying anything. Same
+// in-memory/per-process caveat as focusProducts and every other Map here.
+const lastOrders = new Map(); // senderId -> { id, status }
+
+function setLastOrder(senderId, order) {
+  lastOrders.set(senderId, { id: order.id, status: order.status });
+}
+
 // --- Human handoff: actually pings the owner ---------------------------
 // Sends a real Messenger DM to OWNER_PSID with the customer's message and
 // a link straight into that conversation in Meta's Page Inbox, so you can
@@ -355,16 +365,53 @@ function inboxLink(senderId) {
     : `https://www.facebook.com/messages/t/${senderId}`;
 }
 
-async function notifyOwner(senderId, customerText) {
+// Best-effort lookup of the customer's Messenger display name via the
+// Send API's user profile endpoint. Meta has tightened what this endpoint
+// returns over the years (policy changes, permission requirements, and it
+// generally only works within an active messaging window) — treat this as
+// "nice to have," never required, and always have a fallback ready.
+async function fetchCustomerName(senderId) {
+  if (!PAGE_TOKEN) return null;
+  try {
+    const res = await fetch(
+      `https://graph.facebook.com/v21.0/${senderId}?fields=first_name,last_name&access_token=${PAGE_TOKEN}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const name = [data.first_name, data.last_name].filter(Boolean).join(" ").trim();
+    return name || null;
+  } catch (err) {
+    console.error(`[messenger] couldn't fetch profile name for ${senderId}:`, err.message);
+    return null;
+  }
+}
+
+async function notifyOwner(senderId, customerText, reason = "Customer wants to speak with the owner.") {
   if (!OWNER_PSID) {
     console.warn("OWNER_PSID not set — can't ping owner. See setup notes near the top of this file.");
     return;
   }
   const preview = customerText.length > 300 ? customerText.slice(0, 300) + "…" : customerText;
-  await sendMessage(
-    OWNER_PSID,
-    `🔔 A customer wants to talk to you directly.\n\nTheir last message: "${preview}"\n\nReply here: ${inboxLink(senderId)}`
-  );
+  const name = await fetchCustomerName(senderId);
+  const order = lastOrders.get(senderId);
+
+  const lines = [
+    `🚨 HUMAN SUPPORT REQUEST`,
+    ``,
+    `Customer: ${name || `Messenger user ${senderId}`}`,
+    ``,
+    `Reason:`,
+    reason,
+    ``,
+    `Last message:`,
+    `"${preview}"`,
+  ];
+  if (order) {
+    lines.push(``, `Order:`, `#${order.id}`, `Status: ${order.status}`);
+  }
+  lines.push(``, `Open Conversation: ${inboxLink(senderId)}`);
+
+  await sendMessage(OWNER_PSID, lines.join("\n"));
 }
 
 // --- Handoff pause ------------------------------------------------------
@@ -389,6 +436,12 @@ function isHandoffActive(senderId) {
   }
   return true;
 }
+
+// Type any of these (case-insensitive, trailing !/. ignored) as your reply
+// in the Page Inbox during an active handoff to hand the conversation
+// back to the bot immediately, instead of waiting for HANDOFF_MINUTES to
+// elapse. Add more phrasings here if you find yourself wanting one.
+const RESUME_AI_PHRASES = new Set(["return to ai", "resume ai", "ai on", "bot on", "back to bot"]);
 
 // --- AI understanding layer (Gemini) ---------------------------------
 // Reads the raw message — in English, Tagalog, or Taglish, typos and all —
@@ -774,7 +827,27 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
         // webhook with is_echo: true. Without this check, the bot can end
         // up "replying" to its own messages or to your manual handoff
         // replies, looping or talking over you.
-        if (event.message?.is_echo) return;
+        //
+        // ONE exception: if you (the owner) type one of the RESUME_AI_
+        // PHRASES as your reply in the Page Inbox during an active
+        // handoff, that's treated as a command to end the handoff early
+        // instead of waiting out the full HANDOFF_MINUTES timeout. Note
+        // event.recipient here is the CUSTOMER (echo events are framed
+        // from the Page's point of view: sender = Page, recipient =
+        // whoever you replied to), which is why we read recipient.id
+        // instead of sender.id for this one case.
+        if (event.message?.is_echo) {
+          const echoText = (event.message.text || "").trim().toLowerCase().replace(/[!.]+$/, "");
+          if (RESUME_AI_PHRASES.has(echoText)) {
+            const customerId = event.recipient?.id;
+            if (customerId && isHandoffActive(customerId)) {
+              handoffUntil.delete(customerId);
+              console.log(`[messenger] owner manually resumed AI for ${customerId}`);
+              if (OWNER_PSID) await sendMessage(OWNER_PSID, `✅ AI resumed for that customer.`);
+            }
+          }
+          return;
+        }
 
         // Meta retries webhook deliveries it didn't get a fast 200 for,
         // which can redeliver the same message and cause a duplicate
@@ -911,7 +984,7 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
               await sendMessage(senderId, faq.answer);
               pushHistory(senderId, "bot", faq.answer);
               if (faq.id === "human_agent") {
-                await notifyOwner(senderId, text);
+                await notifyOwner(senderId, text, "Customer explicitly asked to speak with the owner.");
                 startHandoff(senderId);
               }
               return;
@@ -931,7 +1004,7 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
               await sendMessage(senderId, msg);
               pushHistory(senderId, "bot", msg);
               if (failCount >= HUMAN_HANDOFF_THRESHOLD) {
-                await notifyOwner(senderId, text);
+                await notifyOwner(senderId, text, `Bot couldn't help after ${failCount} tries in a row — auto-escalated.`);
                 startHandoff(senderId);
                 await sendMessage(senderId, HUMAN_HANDOFF_MESSAGE);
                 pushHistory(senderId, "bot", HUMAN_HANDOFF_MESSAGE);
@@ -999,6 +1072,7 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
                 continue;
               }
               anyResolved = true;
+              setLastOrder(senderId, order);
               const items = await db.prepare(`SELECT name, qty FROM order_items WHERE order_id = $1 ORDER BY id`).all(orderId);
               factsParts.push(`Found their order — the exact details are sent right after your reply, so don't restate any numbers/status yourself.`);
               afterReply.push(async () => sendMessage(senderId, formatOrderStatusReply(order, items)));
@@ -1091,14 +1165,14 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
           for (const step of afterReply) await step();
 
           if (humanAgentRequested) {
-            await notifyOwner(senderId, text);
+            await notifyOwner(senderId, text, "Customer explicitly asked to speak with the owner.");
             startHandoff(senderId);
           }
 
           if (anyFailed && !anyResolved) {
             const failCount = recordFailure(senderId);
             if (failCount >= HUMAN_HANDOFF_THRESHOLD && !humanAgentRequested) {
-              await notifyOwner(senderId, text);
+              await notifyOwner(senderId, text, `Bot couldn't help after ${failCount} tries in a row — auto-escalated.`);
               startHandoff(senderId);
               await replyNaturally(
                 `You're having trouble helping with this. Let them know you're connecting them with ${OWNER_NAME} now, who'll take over here.`,
