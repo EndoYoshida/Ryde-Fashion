@@ -18,12 +18,16 @@ const router = Router();
 const VERIFY_TOKEN = process.env.FB_VERIFY_TOKEN;
 const PAGE_TOKEN = process.env.FB_PAGE_TOKEN;
 const APP_SECRET = process.env.FB_APP_SECRET;
-// ANTHROPIC_API_KEY - from console.anthropic.com — powers real language
+// GEMINI_API_KEY - from aistudio.google.com/apikey — powers real language
 // understanding (Tagalog/Taglish/English, typos, shorthand) instead of
 // literal keyword matching. If unset, the bot still works using the older
 // keyword-matching logic below as a fallback, just less flexibly.
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const CLAUDE_MODEL = "claude-haiku-4-5-20251001"; // fast + cheap, plenty for this
+// NOTE: Gemini's free tier is rate-limited (~15 requests/minute as of
+// mid-2026 — check current limits at ai.google.dev/gemini-api/docs/rate-limits,
+// they change). If you burst past it, calls fail and this file falls back
+// to the keyword matcher automatically, so the bot won't go silent.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = "gemini-2.0-flash"; // free tier
 // Same pattern emailTemplates.js uses for building absolute URLs to files
 // in /public — Messenger needs a real public URL, not a relative path.
 const APP_ORIGIN = process.env.APP_ORIGIN || "http://localhost:4000";
@@ -134,31 +138,38 @@ function matchFaq(text) {
   return FAQS.find((f) => f.keywords.some((k) => lower.includes(k)));
 }
 
-// --- AI understanding layer (Claude) --------------------------------
+// --- AI understanding layer (Gemini) ---------------------------------
 // Reads the raw message — in English, Tagalog, or Taglish, typos and all —
 // and figures out what the customer actually wants: an FAQ answer, a
 // product search (translated to clean English search terms), or neither
 // (a greeting/small talk). This replaces guessing intent from a fixed
 // word list, which breaks on anything not explicitly anticipated.
+//
+// Returns the same shape the rest of this file expects —
+// { intent, faq_id?, search_terms? } — regardless of which AI provider
+// is behind it, so nothing downstream needed to change.
 async function interpretMessage(text) {
-  if (!ANTHROPIC_API_KEY) return null;
+  if (!GEMINI_API_KEY) return null;
 
   const faqList = FAQS.map((f) => f.id).join(", ");
   const system =
     `You triage incoming Facebook Messenger messages for a Philippines-based online shop ` +
     `selling authentic (never used) branded bags, watches, apparel, and accessories. ` +
     `Customers write in English, Tagalog, or Taglish, often with typos/shorthand (e.g. "hm" = ` +
-    `"how much", "meron ba" = "do you have"). Classify each message using the interpret_message tool. ` +
+    `"how much", "meron ba" = "do you have"). Classify each message using the interpret_message function. ` +
     `Known FAQ topics: cod (cash on delivery), shipping (delivery/couriers/areas), authenticity ` +
     `(is it real/legit/registered business), location (where based/meet-up), returns (return/exchange ` +
     `policy), payment (how to pay), hours (business hours), condition (brand new vs used), installment ` +
     `(payment plans/layaway), item_care (how to store/maintain items after receiving), reservation ` +
     `(reserving/pre-ordering an item before payment).`;
 
-  const tool = {
+  // Same schema shape Claude used (input_schema) — Gemini's function
+  // declarations accept the same JSON-schema subset, just under a
+  // different key ("parameters" instead of "input_schema").
+  const functionDeclaration = {
     name: "interpret_message",
     description: "Classify a customer message so the store's bot can respond correctly.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         intent: {
@@ -183,31 +194,33 @@ async function interpretMessage(text) {
     },
   };
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 300,
-      system,
-      messages: [{ role: "user", content: text }],
-      tools: [tool],
-      tool_choice: { type: "tool", name: "interpret_message" },
-    }),
-  });
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: system }] },
+        contents: [{ role: "user", parts: [{ text }] }],
+        tools: [{ function_declarations: [functionDeclaration] }],
+        // Forces Gemini to call this function rather than replying in
+        // plain text — the equivalent of Claude's tool_choice.
+        tool_config: {
+          function_calling_config: { mode: "ANY", allowed_function_names: ["interpret_message"] },
+        },
+      }),
+    }
+  );
 
   if (!res.ok) {
-    console.error("Claude interpret call failed:", await res.text());
+    console.error("Gemini interpret call failed:", await res.text());
     return null;
   }
 
   const data = await res.json();
-  const toolUse = data.content?.find((b) => b.type === "tool_use");
-  return toolUse?.input || null;
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  const functionCall = parts.find((p) => p.functionCall)?.functionCall;
+  return functionCall?.args || null;
 }
 
 // --- Product lookup: matches on brand, name, or category. Not fuzzy —
@@ -227,7 +240,7 @@ async function searchProductsByWords(words) {
   return rows;
 }
 
-// Fallback used only when Claude is unavailable/unset, or returned
+// Fallback used only when Gemini is unavailable/unset, or returned
 // "other" for a message that still looks like it might be a product ask.
 // Common filler words in how people actually phrase a question — stripped
 // so "how much is the Calvin Klein bag" searches on "calvin klein bag",
@@ -293,13 +306,14 @@ router.post(
         if (!senderId || !text) continue; // skip non-text (stickers, etc.)
 
         try {
-          // Ask Claude what the customer means first — handles Tagalog/
+          // Ask Gemini what the customer means first — handles Tagalog/
           // Taglish/typos that a fixed keyword list can't anticipate.
-          // Falls back to the old keyword-based logic if Claude is
-          // unavailable (no API key, or the call itself fails) so the
-          // bot degrades gracefully instead of going silent.
+          // Falls back to the old keyword-based logic if Gemini is
+          // unavailable (no API key, the call fails, or the free-tier
+          // rate limit is hit) so the bot degrades gracefully instead of
+          // going silent.
           const interpretation = await interpretMessage(text).catch((err) => {
-            console.error("Claude interpret failed:", err);
+            console.error("Gemini interpret failed:", err);
             return null;
           });
 
@@ -326,7 +340,7 @@ router.post(
           if (interpretation?.intent === "product_search" && interpretation.search_terms?.length) {
             products = await searchProductsByWords(interpretation.search_terms.map((w) => w.toLowerCase()));
           } else {
-            // Claude unavailable/failed — fall back to the keyword FAQ +
+            // Gemini unavailable/failed — fall back to the keyword FAQ +
             // product matcher so the bot still responds to something.
             const faq = matchFaq(text);
             if (faq) {
