@@ -701,7 +701,42 @@ function formatOrderStatusReply(order, items) {
   );
 }
 
-// --- 4. Incoming messages --------------------------------------------
+// --- Per-sender processing queue -----------------------------------------
+// Meta delivers each Messenger event as its OWN webhook POST — so when a
+// customer sends a photo immediately followed by a separate text message
+// (very common; Messenger often splits these), those two events arrive as
+// two independent HTTP requests to this route, each running this handler
+// concurrently with no coordination between them by default.
+// The photo path is slow (downloads the image, calls Gemini for an
+// embedding, queries pgvector); the text path is fast (one Gemini classify
+// call). Without serialization, the FASTER text reply can be sent before
+// the SLOWER photo reply, even though the photo arrived first — producing
+// exactly the kind of confusing, out-of-order double-reply you saw (a
+// "couldn't find that" immediately followed by "here's what we found").
+// This queue guarantees all events for one senderId run one at a time, in
+// arrival order, regardless of how many separate webhook deliveries they
+// came in as. Different customers are unaffected — they still process
+// fully in parallel.
+const senderQueues = new Map(); // senderId -> Promise (tail of that sender's queue)
+
+function enqueueForSender(senderId, task) {
+  const previousTail = senderQueues.get(senderId) || Promise.resolve();
+  const tail = previousTail.then(task, task).catch((err) => {
+    console.error(`[messenger] queued event failed for ${senderId}:`, err);
+  });
+  senderQueues.set(senderId, tail);
+  // Once this sender's queue is idle again, drop the map entry so it
+  // doesn't grow forever for customers who stop messaging. Safe even if
+  // another event was enqueued in the meantime — it'll have replaced this
+  // entry in the map already, so the delete below only fires for a truly
+  // idle sender.
+  tail.finally(() => {
+    if (senderQueues.get(senderId) === tail) senderQueues.delete(senderId);
+  });
+  return tail;
+}
+
+
 router.post(
   "/webhook",
   asyncHandler(async (req, res) => {
@@ -721,18 +756,30 @@ router.post(
         const hasImage = (event.message?.attachments || []).some((a) => a.type === "image");
         if (!senderId || (!text && !hasImage)) continue; // skip non-text, non-image (stickers, etc.)
 
+        // Route through the per-sender queue (see comment above) instead
+        // of processing inline — this guarantees a photo event and a
+        // separately-delivered follow-up text event for the SAME sender
+        // never race each other, even though each is its own webhook POST.
+        enqueueForSender(senderId, () => processMessagingEvent(event, senderId, text, hasImage));
+      }
+    }
+  })
+);
+
+async function processMessagingEvent(event, senderId, text, hasImage) {
+
         // Skip "echo" events — Meta replays messages the PAGE itself sent
         // (including this bot's own replies, and any manual replies you
         // type in the Page Inbox during a handoff) back through this same
         // webhook with is_echo: true. Without this check, the bot can end
         // up "replying" to its own messages or to your manual handoff
         // replies, looping or talking over you.
-        if (event.message?.is_echo) continue;
+        if (event.message?.is_echo) return;
 
         // Meta retries webhook deliveries it didn't get a fast 200 for,
         // which can redeliver the same message and cause a duplicate
         // reply. Skip anything we've already processed recently.
-        if (isDuplicateMessage(event.message?.mid)) continue;
+        if (isDuplicateMessage(event.message?.mid)) return;
 
         // Also doubles as how you find your own OWNER_PSID — see the
         // setup note near the top of this file.
@@ -745,7 +792,7 @@ router.post(
         if (isHandoffActive(senderId)) {
           if (text) pushHistory(senderId, "customer", text);
           if (hasImage) pushHistory(senderId, "customer", "[sent a photo of an item]");
-          continue;
+          return;
         }
 
         // --- Image-only message (no text) --------------------------------
@@ -789,7 +836,7 @@ router.post(
             const line = formatReplyLine(match.product);
             await sendMessage(senderId, line);
             pushHistory(senderId, "bot", line);
-            continue;
+            return;
           }
 
           if (!isPendingClarification(senderId)) {
@@ -799,7 +846,7 @@ router.post(
             await sendMessage(senderId, msg);
             pushHistory(senderId, "bot", msg);
           }
-          continue;
+          return;
         }
 
         try {
@@ -867,7 +914,7 @@ router.post(
                 await notifyOwner(senderId, text);
                 startHandoff(senderId);
               }
-              continue;
+              return;
             }
             const fallbackWords = extractSearchWords(text);
             if (fallbackWords.length === 0) {
@@ -875,7 +922,7 @@ router.post(
               setPendingClarification(senderId);
               await sendMessage(senderId, msg);
               pushHistory(senderId, "bot", msg);
-              continue;
+              return;
             }
             const products = await searchProducts({ words: fallbackWords });
             if (products.length === 0) {
@@ -890,7 +937,7 @@ router.post(
                 pushHistory(senderId, "bot", HUMAN_HANDOFF_MESSAGE);
                 resetFailure(senderId);
               }
-              continue;
+              return;
             }
             resetFailure(senderId);
             clearPendingClarification(senderId);
@@ -902,7 +949,7 @@ router.post(
               if (imageUrl) await sendImage(senderId, imageUrl);
               await sendMessage(senderId, formatReplyLine(p));
             }
-            continue;
+            return;
           }
 
           // --- Gemini path: walk each detected intent, building one
@@ -1037,7 +1084,7 @@ router.post(
               `Nothing specific matched — respond warmly and briefly, then invite them to ask about a product or a store policy.`,
               `Hi! 👋 Ask me about a product (brand, item, or category) for price & stock, or ask about shipping, COD, returns, payment, etc.`
             );
-            continue;
+            return;
           }
 
           await replyNaturally(factsParts.join("\n"));
@@ -1067,10 +1114,7 @@ router.post(
         } catch (err) {
           console.error("Messenger auto-reply failed:", err);
         }
-      }
-    }
-  })
-);
+}
 
 async function sendMessage(recipientId, text) {
   if (!PAGE_TOKEN) {
