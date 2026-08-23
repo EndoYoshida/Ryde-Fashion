@@ -22,7 +22,16 @@ import { db } from "../db/index.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const EMBEDDING_MODEL = "gemini-embedding-2"; // Google's first multimodal (text+image) embedding model, GA since ~mid-2026
-const EMBEDDING_DIMENSION = 3072; // must match the `vector(N)` column size in the migration above
+// gemini-embedding-2 outputs 3072 dimensions by default, but pgvector's
+// HNSW index (used below for fast lookups) hard-caps at 2000 dimensions —
+// a 3072-dim column can't be indexed. The model supports Matryoshka
+// truncation via outputDimensionality, and Google's own guidance is that
+// 768 keeps near-peak quality at a quarter of the storage/index cost, so
+// that's what we request. If you ever change this, the `vector(N)` column
+// size in the SQL migration MUST change to match, and every embedding
+// (catalog + backfilled) needs regenerating — the two dimensions aren't
+// compatible with each other.
+const EMBEDDING_DIMENSION = 768;
 
 // How close a match needs to be before the bot states it as fact rather
 // than asking the customer to confirm. pgvector's `<=>` operator returns
@@ -57,6 +66,7 @@ async function embedImage(imageUrl) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         content: { parts: [{ inline_data: { mime_type: mimeType, data: base64 } }] },
+        outputDimensionality: EMBEDDING_DIMENSION,
       }),
     }
   );
@@ -69,7 +79,19 @@ async function embedImage(imageUrl) {
   if (!Array.isArray(values) || values.length === 0) {
     throw new Error("Gemini embedContent returned no embedding values.");
   }
-  return values;
+  if (values.length !== EMBEDDING_DIMENSION) {
+    throw new Error(`Expected a ${EMBEDDING_DIMENSION}-dim embedding but got ${values.length} — did EMBEDDING_DIMENSION change without re-running the SQL migration?`);
+  }
+  // Google's own docs disagree on whether truncated (non-3072) outputs
+  // come back pre-normalized — normalizing here ourselves is cheap and
+  // makes pgvector's cosine distance (`<=>`) correct either way.
+  return normalizeVector(values);
+}
+
+function normalizeVector(values) {
+  const magnitude = Math.sqrt(values.reduce((sum, v) => sum + v * v, 0));
+  if (magnitude === 0) return values;
+  return values.map((v) => v / magnitude);
 }
 
 // pgvector expects its literal vector syntax as a string: '[0.1,0.2,...]'
