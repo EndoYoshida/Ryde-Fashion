@@ -236,6 +236,30 @@ function matchFaq(text) {
 // this bot's message volume — it just means a streak doesn't survive a
 // deploy, not a correctness problem.
 const HUMAN_HANDOFF_THRESHOLD = 2;
+
+// --- Duplicate-delivery guard -------------------------------------------
+// Meta retries the webhook POST whenever it doesn't get a fast 200 (slow
+// cold start, transient error, etc.), which can redeliver the SAME message
+// and trigger a duplicate reply. Each Messenger message has a stable
+// `mid` — remember recently-seen ones and skip repeats. Capped and
+// periodically trimmed so this can't grow unbounded; in-memory only, same
+// redeploy caveat as the other Maps in this file (losing the last few
+// seconds of dedupe history on a redeploy is harmless — Meta's retries
+// happen within seconds, not across a deploy).
+const seenMessageIds = new Map(); // mid -> timestamp seen
+const DEDUPE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes is generous for Meta's retry window
+
+function isDuplicateMessage(mid) {
+  if (!mid) return false; // no id to key on — let it through rather than risk dropping a real message
+  const now = Date.now();
+  // Opportunistic cleanup of stale entries, avoids a dedicated timer.
+  for (const [id, seenAt] of seenMessageIds) {
+    if (now - seenAt > DEDUPE_WINDOW_MS) seenMessageIds.delete(id);
+  }
+  if (seenMessageIds.has(mid)) return true;
+  seenMessageIds.set(mid, now);
+  return false;
+}
 const HUMAN_HANDOFF_MESSAGE = `I might be having trouble understanding — let me connect you with ${OWNER_NAME} instead! They'll be the one replying here from now on. 🙏`;
 const failCounts = new Map(); // senderId -> consecutive failed-to-help count
 
@@ -666,6 +690,19 @@ router.post(
         const senderId = event.sender?.id;
         const text = event.message?.text;
         if (!senderId || !text) continue; // skip non-text (stickers, etc.)
+
+        // Skip "echo" events — Meta replays messages the PAGE itself sent
+        // (including this bot's own replies, and any manual replies you
+        // type in the Page Inbox during a handoff) back through this same
+        // webhook with is_echo: true. Without this check, the bot can end
+        // up "replying" to its own messages or to your manual handoff
+        // replies, looping or talking over you.
+        if (event.message?.is_echo) continue;
+
+        // Meta retries webhook deliveries it didn't get a fast 200 for,
+        // which can redeliver the same message and cause a duplicate
+        // reply. Skip anything we've already processed recently.
+        if (isDuplicateMessage(event.message?.mid)) continue;
 
         // Also doubles as how you find your own OWNER_PSID — see the
         // setup note near the top of this file.
