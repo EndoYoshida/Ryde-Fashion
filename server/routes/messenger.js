@@ -68,14 +68,14 @@ function verifySignature(req) {
 // of these first — so "do you do COD?" answers as a policy question instead
 // of failing an (unrelated) product-name search.
 //
-// IMPORTANT: fill in the two marked with [FILL IN] below with your actual
-// policy — everything else here was pulled straight from your existing
-// Auto Reply message in Meta Business Suite, so it's already accurate.
+// All answers below reflect the shop's actual policy as of the last update.
+// If any policy changes (especially returns — currently "none yet"), update
+// the relevant answer here.
 const FAQS = [
   {
     id: "cod",
     keywords: ["cod", "cash on delivery"],
-    answer: `[FILL IN — do you accept Cash on Delivery? Which areas/couriers?]`,
+    answer: `Yes — we accept Cash on Delivery via J&T. 💵`,
   },
   {
     id: "shipping",
@@ -92,12 +92,14 @@ const FAQS = [
   {
     id: "location",
     keywords: ["meet up", "meetup", "pick up", "pickup", "located", "location", "based", "where are you", "saan"],
-    answer: `We're based in Valenzuela City, Metro Manila — meet-up/pickup available there. 📍`,
+    answer: `We're based in Valenzuela City, Metro Manila — meet-up/pickup also available at our partner stores in Olongapo and Angeles. 📍`,
   },
   {
     id: "returns",
     keywords: ["return", "exchange", "refund"],
-    answer: `[FILL IN — what's your return/exchange policy, and within how many days?]`,
+    // NOTE: no return/exchange policy exists yet as of this writing — update
+    // this once you finalize one, this is just a placeholder honest answer.
+    answer: `We currently don't offer returns/exchanges — please review item details and photos carefully before ordering. We'll update this policy soon! 🙏`,
   },
   {
     id: "payment",
@@ -131,11 +133,76 @@ const FAQS = [
     answer: `Reservations are confirmed only once payment is received (first paid, first served) — unpaid reservations aren't guaranteed and may be released. Please confirm availability before sending payment, and once an order is packed/shipped, cancellations are no longer allowed. For pre-orders/layaway, the agreed payment schedule must be followed. 📅`,
     images: [faqImage("reservation-policy.jpg")],
   },
+  {
+    id: "how_to_order",
+    keywords: ["how to order", "paano order", "paano bumili", "how can i order", "how do i order", "pa-order po", "gusto ko po nito"],
+    answer: `Ordering is easy! 1️⃣ Message us the item you'd like — we'll confirm price & stock. 2️⃣ We'll send payment details (GCash, bank transfer, or COD via J&T). 3️⃣ Once payment is confirmed, we prepare your order for shipping or pickup/meet-up. 📦`,
+  },
+  {
+    id: "delivery_time",
+    keywords: ["kailan po dadating", "kailan ko matatanggap", "how many days delivery", "ilang days", "delivery time", "eta"],
+    answer: `Delivery time depends on your location and courier — nationwide shipping via J&T typically takes a few business days, or same-day via Lalamove in select areas. We'll share the tracking number once your order ships! 🚚`,
+  },
+  {
+    id: "promos",
+    keywords: ["promo", "discount", "sale kayo", "voucher", "may sale"],
+    answer: `No ongoing promo right now — follow our Page for updates! 💗`,
+  },
+  {
+    id: "wholesale",
+    keywords: ["wholesale", "bulk order", "bulk discount", "discount pag marami"],
+    answer: `We don't currently offer wholesale/bulk pricing, sorry! 🙏`,
+  },
+  {
+    id: "actual_photos",
+    keywords: ["actual photo", "actual pics", "actual unit", "makita actual"],
+    answer: `The photos shown are of our actual stock, not generic catalog photos! If you'd like a fresh photo of the exact unit before ordering, just ask and we'll send one. 📸`,
+  },
+  {
+    id: "cancellation",
+    keywords: ["cancel", "cancellation", "i want to cancel", "pwede po ba i-cancel"],
+    answer: `Orders can be cancelled anytime before they've been packed or shipped — once packed/shipped, cancellations are no longer allowed. Message us your order number as soon as possible if you need to cancel. 📦`,
+  },
+  {
+    id: "sizes_colors",
+    keywords: ["size", "sizes", "sizing", "color", "colors", "kulay", "size chart", "measurement", "measurements"],
+    // Our products table has no size/color columns, so this can't be a
+    // real per-item lookup yet — it's a generic pointer instead of a
+    // guess. If size/color tracking gets added to the DB later, this can
+    // be upgraded to an actual availability check.
+    answer: `Available sizes/colors vary per item — please check the item's photos/description, or send us the exact product name and we'll confirm what's currently on hand. 📏`,
+  },
+  {
+    id: "human_agent",
+    keywords: ["human agent", "customer service", "totoong tao", "customer support", "talk to a person", "talk to someone", "human po", "makausap ang tao"],
+    answer: `Sure — I've flagged this for our team and someone will follow up with you shortly! 🙏 Feel free to describe what you need in the meantime.`,
+  },
 ];
 
 function matchFaq(text) {
   const lower = text.toLowerCase();
   return FAQS.find((f) => f.keywords.some((k) => lower.includes(k)));
+}
+
+// --- Human agent handoff --------------------------------------------
+// After a couple of consecutive failed lookups (product not found, order
+// not found) for the SAME customer, stop guessing and let them know a
+// human will follow up — instead of repeating "couldn't find that" forever.
+// In-memory only: resets if the server restarts/redeploys. That's fine at
+// this bot's message volume — it just means a streak doesn't survive a
+// deploy, not a correctness problem.
+const HUMAN_HANDOFF_THRESHOLD = 2;
+const HUMAN_HANDOFF_MESSAGE = `I might be having trouble understanding — I've flagged this for our team and someone will follow up with you shortly! 🙏 Feel free to describe what you need in the meantime.`;
+const failCounts = new Map(); // senderId -> consecutive failed-to-help count
+
+function recordFailure(senderId) {
+  const count = (failCounts.get(senderId) || 0) + 1;
+  failCounts.set(senderId, count);
+  return count;
+}
+
+function resetFailure(senderId) {
+  failCounts.delete(senderId);
 }
 
 // --- AI understanding layer (Gemini) ---------------------------------
@@ -161,7 +228,16 @@ async function interpretMessage(text) {
     `(is it real/legit/registered business), location (where based/meet-up), returns (return/exchange ` +
     `policy), payment (how to pay), hours (business hours), condition (brand new vs used), installment ` +
     `(payment plans/layaway), item_care (how to store/maintain items after receiving), reservation ` +
-    `(reserving/pre-ordering an item before payment).`;
+    `(reserving/pre-ordering an item before payment), how_to_order (steps to place an order), ` +
+    `delivery_time (how many days delivery takes, ETA), promos (ongoing discounts/sales/vouchers), ` +
+    `wholesale (bulk/wholesale orders), actual_photos (asking for real photos of the actual unit, not ` +
+    `catalog photos), cancellation (can I cancel my order), sizes_colors (asking what sizes/colors are ` +
+    `available — we don't track this per-item yet, so this always gets a generic reply), human_agent ` +
+    `(explicitly asking to talk to a real person/customer support). ` +
+    `Use the "order_status" intent when the customer is asking about the status/delivery progress of an ` +
+    `order they ALREADY PLACED (e.g. "kailan po dadating yung order ko", "order status po", "nasaan na po order ko") — ` +
+    `this is different from delivery_time, which is a general "how long does shipping take" question, ` +
+    `not asking about a specific existing order. If they included an order number in the message, put it in order_id.`;
 
   // Same schema shape Claude used (input_schema) — Gemini's function
   // declarations accept the same JSON-schema subset, just under a
@@ -174,9 +250,9 @@ async function interpretMessage(text) {
       properties: {
         intent: {
           type: "string",
-          enum: ["faq", "product_search", "other"],
+          enum: ["faq", "product_search", "order_status", "other"],
           description:
-            "'faq' for a policy/store question matching one of the known topics, 'product_search' when they're asking about a specific product/brand/category, 'other' for greetings/small talk/anything else.",
+            "'faq' for a policy/store question matching one of the known topics, 'product_search' when they're asking about a specific product/brand/category, 'order_status' when asking about the status of an order they already placed, 'other' for greetings/small talk/anything else.",
         },
         faq_id: {
           type: "string",
@@ -188,6 +264,11 @@ async function interpretMessage(text) {
           items: { type: "string" },
           description:
             'Only set when intent is "product_search". The product/brand/category keywords in ENGLISH, translated if the message was in Tagalog, with filler words removed. E.g. "meron ba kayo bag for men" -> ["bag"].',
+        },
+        order_id: {
+          type: "string",
+          description:
+            'Only set when intent is "order_status" AND the customer included an order number/ID in their message. Extract it exactly as written — do not guess or invent one if they didn\'t provide it.',
         },
       },
       required: ["intent"],
@@ -255,13 +336,15 @@ const STOPWORDS = new Set([
   "men", "man", "mens", "women", "woman", "womens", "male", "female",
 ]);
 
-async function findProductsFallback(query) {
-  const words = query
+// Strips filler words down to actual search terms — used both to check
+// whether a message is a genuinely vague product question (nothing left
+// after stripping) and to build the search itself.
+function extractSearchWords(query) {
+  return query
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .split(/\s+/)
     .filter((w) => w.length > 1 && !STOPWORDS.has(w));
-  return searchProductsByWords(words);
 }
 
 // Looks up each product's first photo (lowest sort_order), if it has one.
@@ -284,6 +367,22 @@ async function findFirstImages(productIds) {
 function formatReplyLine(p) {
   const stockLine = p.status === "available" && p.stock > 0 ? `In stock (${p.stock} left)` : "Currently out of stock";
   return `${p.brand} - ${p.name}\n₱${p.price.toLocaleString()} · ${stockLine}`;
+}
+
+// NOTE: order.status is echoed as-is from the DB rather than mapped to a
+// friendlier label, since the actual set of status values you use
+// (e.g. "pending" / "packed" / "shipped" / "delivered" / "cancelled")
+// wasn't confirmed — double check this reads naturally against your real
+// data and add a label map here if you want nicer wording per status.
+function formatOrderStatusReply(order, items) {
+  const itemsLine = items.length ? items.map((i) => `${i.qty}x ${i.name}`).join(", ") : "";
+  const paymentLine = order.payment_status ? ` · Payment: ${order.payment_status}` : "";
+  return (
+    `Order #${order.id}` +
+    (itemsLine ? ` — ${itemsLine}` : "") +
+    `\nStatus: ${order.status}${paymentLine}` +
+    `\nTotal: ₱${order.total.toLocaleString()} · Placed ${order.date}`
+  );
 }
 
 // --- 4. Incoming messages --------------------------------------------
@@ -320,6 +419,7 @@ router.post(
           if (interpretation?.intent === "faq" && interpretation.faq_id) {
             const faq = FAQS.find((f) => f.id === interpretation.faq_id);
             if (faq) {
+              resetFailure(senderId);
               for (const imageUrl of faq.images || []) {
                 await sendImage(senderId, imageUrl);
               }
@@ -336,28 +436,86 @@ router.post(
             continue;
           }
 
+          if (interpretation?.intent === "order_status") {
+            const orderId = interpretation.order_id?.trim();
+            if (!orderId) {
+              await sendMessage(senderId, `Sure — what's your order number? You can find it on your order confirmation. 🔎`);
+              continue;
+            }
+
+            const orderRows = await db
+              .prepare(`SELECT id, status, payment_status, total, date FROM orders WHERE id = $1`)
+              .all(orderId);
+            const order = orderRows[0];
+
+            if (!order) {
+              const failCount = recordFailure(senderId);
+              await sendMessage(senderId, `I couldn't find an order with that number — could you double-check it? It's on your order confirmation. 🔎`);
+              if (failCount >= HUMAN_HANDOFF_THRESHOLD) {
+                await sendMessage(senderId, HUMAN_HANDOFF_MESSAGE);
+                resetFailure(senderId);
+              }
+              continue;
+            }
+
+            resetFailure(senderId);
+            const items = await db
+              .prepare(`SELECT name, qty FROM order_items WHERE order_id = $1 ORDER BY id`)
+              .all(orderId);
+            await sendMessage(senderId, formatOrderStatusReply(order, items));
+            continue;
+          }
+
+          // A general "what do you have / what's in stock" question isn't
+          // a failed search — there's genuinely nothing to search on. This
+          // gets its own reply (categories to choose from) rather than the
+          // "couldn't find a match" message, which reads oddly when nothing
+          // was actually searched for.
+          const VAGUE_PRODUCT_REPLY = `We carry bags, watches, apparel, and accessories 👜⌚👕 — which category or brand are you looking for?`;
+
           let products;
-          if (interpretation?.intent === "product_search" && interpretation.search_terms?.length) {
+          if (interpretation?.intent === "product_search") {
+            if (!interpretation.search_terms?.length) {
+              // Gemini recognized this as a product question but found no
+              // specific item/brand/category to search on — i.e. genuinely
+              // vague, not a failed extraction worth retrying on raw text.
+              await sendMessage(senderId, VAGUE_PRODUCT_REPLY);
+              continue;
+            }
             products = await searchProductsByWords(interpretation.search_terms.map((w) => w.toLowerCase()));
           } else {
             // Gemini unavailable/failed — fall back to the keyword FAQ +
             // product matcher so the bot still responds to something.
             const faq = matchFaq(text);
             if (faq) {
+              resetFailure(senderId);
               for (const imageUrl of faq.images || []) {
                 await sendImage(senderId, imageUrl);
               }
               await sendMessage(senderId, faq.answer);
               continue;
             }
-            products = await findProductsFallback(text);
+            const fallbackWords = extractSearchWords(text);
+            if (fallbackWords.length === 0) {
+              // Same vague-question case, reached via the keyword path
+              // instead of Gemini (e.g. Gemini is down).
+              await sendMessage(senderId, VAGUE_PRODUCT_REPLY);
+              continue;
+            }
+            products = await searchProductsByWords(fallbackWords);
           }
 
           if (products.length === 0) {
+            const failCount = recordFailure(senderId);
             await sendMessage(senderId, `Sorry, I couldn't find a product matching "${text}". Could you share the exact product name or brand?`);
+            if (failCount >= HUMAN_HANDOFF_THRESHOLD) {
+              await sendMessage(senderId, HUMAN_HANDOFF_MESSAGE);
+              resetFailure(senderId);
+            }
             continue;
           }
 
+          resetFailure(senderId);
           const images = await findFirstImages(products.map((p) => p.id));
 
           // One photo + its caption per matched product, so each image
