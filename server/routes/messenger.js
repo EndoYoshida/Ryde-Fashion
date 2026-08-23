@@ -110,6 +110,7 @@ function matchFaq(text) {
 // for men" falls back to matching all bags rather than returning nothing.
 const STOPWORDS = new Set([
   "how", "much", "is", "are", "the", "a", "an", "for", "of", "do", "does",
+  "hm", "hmu", "presyo",
   "you", "have", "in", "stock", "price", "cost", "available", "availability",
   "please", "po", "ba", "meron", "ba'ng", "magkano", "pa", "may", "ang", "ng",
   "men", "man", "mens", "women", "woman", "womens", "male", "female",
