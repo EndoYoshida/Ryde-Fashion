@@ -18,6 +18,12 @@ const router = Router();
 const VERIFY_TOKEN = process.env.FB_VERIFY_TOKEN;
 const PAGE_TOKEN = process.env.FB_PAGE_TOKEN;
 const APP_SECRET = process.env.FB_APP_SECRET;
+// ANTHROPIC_API_KEY - from console.anthropic.com — powers real language
+// understanding (Tagalog/Taglish/English, typos, shorthand) instead of
+// literal keyword matching. If unset, the bot still works using the older
+// keyword-matching logic below as a fallback, just less flexibly.
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const CLAUDE_MODEL = "claude-haiku-4-5-20251001"; // fast + cheap, plenty for this
 
 // --- 1. Webhook verification (Meta calls this once, when you save the
 // callback URL in the dashboard) --------------------------------------
@@ -59,38 +65,47 @@ function verifySignature(req) {
 // Auto Reply message in Meta Business Suite, so it's already accurate.
 const FAQS = [
   {
+    id: "cod",
     keywords: ["cod", "cash on delivery"],
     answer: `[FILL IN — do you accept Cash on Delivery? Which areas/couriers?]`,
   },
   {
+    id: "shipping",
     keywords: ["shipping", "deliver", "delivery", "ship"],
     answer: `We offer nationwide shipping 🚚, plus meet-up/pickup if you're nearby.`,
   },
   {
+    id: "authenticity",
     keywords: ["authentic", "original", "fake", "genuine"],
     answer: `All our items are authentic and sourced from the US — money-back guaranteed if proven fake. ✅`,
   },
   {
+    id: "location",
     keywords: ["meet up", "meetup", "pick up", "pickup", "located", "location", "based", "where are you", "saan"],
     answer: `We're based in Valenzuela City, Metro Manila — meet-up/pickup available there. 📍`,
   },
   {
+    id: "returns",
     keywords: ["return", "exchange", "refund"],
     answer: `[FILL IN — what's your return/exchange policy, and within how many days?]`,
   },
   {
+    id: "payment",
     keywords: ["payment", "gcash", "bank transfer", "how to pay", "paano magbayad"],
     answer: `We currently accept GCash and bank transfer. Just let us know once you're ready to order and we'll send payment details. 💳`,
   },
   {
+    id: "hours",
     keywords: ["hours", "open", "close", "opening", "closing", "anong oras"],
     answer: `We're online and respond from 9AM to 6PM daily. 🕘`,
   },
   {
+    id: "condition",
     keywords: ["brand new", "condition", "used", "preloved", "pre-loved", "bago"],
     answer: `All our items are brand new — never used. ✨`,
   },
   {
+    id: "installment",
     keywords: ["installment", "installement", "hulugan", "layaway"],
     answer: `Sorry, we don't offer installment/layaway at the moment — full payment only. 🙏`,
   },
@@ -101,34 +116,83 @@ function matchFaq(text) {
   return FAQS.find((f) => f.keywords.some((k) => lower.includes(k)));
 }
 
-// Common filler words in how people actually phrase a question — these
-// get stripped before matching so "how much is the Calvin Klein bag"
-// searches on "calvin klein bag", not on "how"/"much"/"is"/"the" too
-// (which would never match a product name and return nothing). Includes
-// common Taglish phrasing since that's the actual customer base. Gender
-// words are also stripped since products aren't tagged by gender — "bag
-// for men" falls back to matching all bags rather than returning nothing.
-const STOPWORDS = new Set([
-  "how", "much", "is", "are", "the", "a", "an", "for", "of", "do", "does",
-  "hm", "hmu", "presyo",
-  "you", "have", "in", "stock", "price", "cost", "available", "availability",
-  "please", "po", "ba", "meron", "ba'ng", "magkano", "pa", "may", "ang", "ng",
-  "men", "man", "mens", "women", "woman", "womens", "male", "female",
-]);
+// --- AI understanding layer (Claude) --------------------------------
+// Reads the raw message — in English, Tagalog, or Taglish, typos and all —
+// and figures out what the customer actually wants: an FAQ answer, a
+// product search (translated to clean English search terms), or neither
+// (a greeting/small talk). This replaces guessing intent from a fixed
+// word list, which breaks on anything not explicitly anticipated.
+async function interpretMessage(text) {
+  if (!ANTHROPIC_API_KEY) return null;
 
-// --- 3. Very simple product lookup: matches on brand, name, or category
-// words. Not fuzzy/AI matching — just an ILIKE search against what's
-// already in your products table. Requires every remaining keyword to
-// match (so "Calvin Klein bag" narrows to bags, not every Calvin Klein
-// product) — returns up to 3 matches, each with its id (needed to look up
-// a photo) and price/stock. -------------------------------------------
-async function findProducts(query) {
-  const words = query
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+  const faqList = FAQS.map((f) => f.id).join(", ");
+  const system =
+    `You triage incoming Facebook Messenger messages for a Philippines-based online shop ` +
+    `selling authentic (never used) branded bags, watches, apparel, and accessories. ` +
+    `Customers write in English, Tagalog, or Taglish, often with typos/shorthand (e.g. "hm" = ` +
+    `"how much", "meron ba" = "do you have"). Classify each message using the interpret_message tool.`;
 
+  const tool = {
+    name: "interpret_message",
+    description: "Classify a customer message so the store's bot can respond correctly.",
+    input_schema: {
+      type: "object",
+      properties: {
+        intent: {
+          type: "string",
+          enum: ["faq", "product_search", "other"],
+          description:
+            "'faq' for a policy/store question matching one of the known topics, 'product_search' when they're asking about a specific product/brand/category, 'other' for greetings/small talk/anything else.",
+        },
+        faq_id: {
+          type: "string",
+          enum: FAQS.map((f) => f.id),
+          description: `Only set when intent is "faq". One of: ${faqList}.`,
+        },
+        search_terms: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            'Only set when intent is "product_search". The product/brand/category keywords in ENGLISH, translated if the message was in Tagalog, with filler words removed. E.g. "meron ba kayo bag for men" -> ["bag"].',
+        },
+      },
+      required: ["intent"],
+    },
+  };
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: CLAUDE_MODEL,
+      max_tokens: 300,
+      system,
+      messages: [{ role: "user", content: text }],
+      tools: [tool],
+      tool_choice: { type: "tool", name: "interpret_message" },
+    }),
+  });
+
+  if (!res.ok) {
+    console.error("Claude interpret call failed:", await res.text());
+    return null;
+  }
+
+  const data = await res.json();
+  const toolUse = data.content?.find((b) => b.type === "tool_use");
+  return toolUse?.input || null;
+}
+
+// --- Product lookup: matches on brand, name, or category. Not fuzzy —
+// just an ILIKE search against what's already in your products table.
+// Requires every given word to match (so ["calvin","klein","bag"] narrows
+// to bags, not every Calvin Klein product) — returns up to 3 matches, each
+// with its id (needed to look up a photo) and price/stock. ----------------
+async function searchProductsByWords(words) {
   if (words.length === 0) return [];
 
   const conditions = words.map((_, i) => `(name ILIKE $${i + 1} OR brand ILIKE $${i + 1} OR category ILIKE $${i + 1})`).join(" AND ");
@@ -138,6 +202,30 @@ async function findProducts(query) {
     .prepare(`SELECT id, name, brand, price, stock, status FROM products WHERE ${conditions} ORDER BY name LIMIT 3`)
     .all(...params);
   return rows;
+}
+
+// Fallback used only when Claude is unavailable/unset, or returned
+// "other" for a message that still looks like it might be a product ask.
+// Common filler words in how people actually phrase a question — stripped
+// so "how much is the Calvin Klein bag" searches on "calvin klein bag",
+// not on "how"/"much"/"is"/"the" too. Includes common Taglish shorthand.
+// Gender words are also stripped since products aren't tagged by gender —
+// "bag for men" falls back to matching all bags rather than nothing.
+const STOPWORDS = new Set([
+  "how", "much", "is", "are", "the", "a", "an", "for", "of", "do", "does",
+  "hm", "hmu", "presyo",
+  "you", "have", "in", "stock", "price", "cost", "available", "availability",
+  "please", "po", "ba", "meron", "ba'ng", "magkano", "pa", "may", "ang", "ng", "kayo",
+  "men", "man", "mens", "women", "woman", "womens", "male", "female",
+]);
+
+async function findProductsFallback(query) {
+  const words = query
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+  return searchProductsByWords(words);
 }
 
 // Looks up each product's first photo (lowest sort_order), if it has one.
@@ -182,13 +270,45 @@ router.post(
         if (!senderId || !text) continue; // skip non-text (stickers, etc.)
 
         try {
-          const faq = matchFaq(text);
-          if (faq) {
-            await sendMessage(senderId, faq.answer);
+          // Ask Claude what the customer means first — handles Tagalog/
+          // Taglish/typos that a fixed keyword list can't anticipate.
+          // Falls back to the old keyword-based logic if Claude is
+          // unavailable (no API key, or the call itself fails) so the
+          // bot degrades gracefully instead of going silent.
+          const interpretation = await interpretMessage(text).catch((err) => {
+            console.error("Claude interpret failed:", err);
+            return null;
+          });
+
+          if (interpretation?.intent === "faq" && interpretation.faq_id) {
+            const faq = FAQS.find((f) => f.id === interpretation.faq_id);
+            if (faq) {
+              await sendMessage(senderId, faq.answer);
+              continue;
+            }
+          }
+
+          if (interpretation?.intent === "other") {
+            await sendMessage(
+              senderId,
+              `Hi! 👋 Ask me about a product (brand, item, or category) for price & stock, or ask about shipping, COD, returns, payment, etc.`
+            );
             continue;
           }
 
-          const products = await findProducts(text);
+          let products;
+          if (interpretation?.intent === "product_search" && interpretation.search_terms?.length) {
+            products = await searchProductsByWords(interpretation.search_terms.map((w) => w.toLowerCase()));
+          } else {
+            // Claude unavailable/failed — fall back to the keyword FAQ +
+            // product matcher so the bot still responds to something.
+            const faq = matchFaq(text);
+            if (faq) {
+              await sendMessage(senderId, faq.answer);
+              continue;
+            }
+            products = await findProductsFallback(text);
+          }
 
           if (products.length === 0) {
             await sendMessage(senderId, `Sorry, I couldn't find a product matching "${text}". Could you share the exact product name or brand?`);
