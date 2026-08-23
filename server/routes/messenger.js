@@ -24,6 +24,10 @@ const APP_SECRET = process.env.FB_APP_SECRET;
 // keyword-matching logic below as a fallback, just less flexibly.
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const CLAUDE_MODEL = "claude-haiku-4-5-20251001"; // fast + cheap, plenty for this
+// Same pattern emailTemplates.js uses for building absolute URLs to files
+// in /public — Messenger needs a real public URL, not a relative path.
+const APP_ORIGIN = process.env.APP_ORIGIN || "http://localhost:4000";
+const faqImage = (filename) => `${APP_ORIGIN}/public/messenger/${filename}`;
 
 // --- 1. Webhook verification (Meta calls this once, when you save the
 // callback URL in the dashboard) --------------------------------------
@@ -72,12 +76,14 @@ const FAQS = [
   {
     id: "shipping",
     keywords: ["shipping", "deliver", "delivery", "ship"],
-    answer: `We offer nationwide shipping 🚚, plus meet-up/pickup if you're nearby.`,
+    answer: `We offer nationwide shipping via J&T, JRS, LBC, and AP Cargo 🚚 — plus same-day delivery via Lalamove in select areas, or meet-up/pickup if you're nearby.`,
+    images: [faqImage("shipping-policy.jpg")],
   },
   {
     id: "authenticity",
-    keywords: ["authentic", "original", "fake", "genuine"],
-    answer: `All our items are authentic and sourced from the US — money-back guaranteed if proven fake. ✅`,
+    keywords: ["authentic", "original", "fake", "genuine", "legit", "scam", "registered", "dti", "bir"],
+    answer: `All our items are authentic and sourced from the US — money-back guaranteed if proven fake by an authorized authenticator. We're also a DTI/BIR-registered legitimate business in the Philippines. ✅`,
+    images: [faqImage("authenticity-guarantee.jpg"), faqImage("business-registration.jpg")],
   },
   {
     id: "location",
@@ -107,7 +113,19 @@ const FAQS = [
   {
     id: "installment",
     keywords: ["installment", "installement", "hulugan", "layaway"],
-    answer: `Sorry, we don't offer installment/layaway at the moment — full payment only. 🙏`,
+    answer: `Yes — we accept pre-orders/layaway for reservations, following an agreed payment schedule. Reservations are only confirmed once payment is received (first paid, first served), and unpaid reservations aren't guaranteed. 📅`,
+  },
+  {
+    id: "item_care",
+    keywords: ["take care", "care instructions", "storage", "unboxing", "alagaan", "how to store"],
+    answer: `A few care tips: remove items from plastic packaging once received, and air out bags/watches/accessories regularly — leather is sensitive to heat and humidity. 🧴`,
+    images: [faqImage("item-care.jpg")],
+  },
+  {
+    id: "reservation",
+    keywords: ["reserve", "reservation", "pre-order", "preorder", "hold this item", "hold an item"],
+    answer: `Reservations are confirmed only once payment is received (first paid, first served) — unpaid reservations aren't guaranteed and may be released. Please confirm availability before sending payment, and once an order is packed/shipped, cancellations are no longer allowed. For pre-orders/layaway, the agreed payment schedule must be followed. 📅`,
+    images: [faqImage("reservation-policy.jpg")],
   },
 ];
 
@@ -130,7 +148,12 @@ async function interpretMessage(text) {
     `You triage incoming Facebook Messenger messages for a Philippines-based online shop ` +
     `selling authentic (never used) branded bags, watches, apparel, and accessories. ` +
     `Customers write in English, Tagalog, or Taglish, often with typos/shorthand (e.g. "hm" = ` +
-    `"how much", "meron ba" = "do you have"). Classify each message using the interpret_message tool.`;
+    `"how much", "meron ba" = "do you have"). Classify each message using the interpret_message tool. ` +
+    `Known FAQ topics: cod (cash on delivery), shipping (delivery/couriers/areas), authenticity ` +
+    `(is it real/legit/registered business), location (where based/meet-up), returns (return/exchange ` +
+    `policy), payment (how to pay), hours (business hours), condition (brand new vs used), installment ` +
+    `(payment plans/layaway), item_care (how to store/maintain items after receiving), reservation ` +
+    `(reserving/pre-ordering an item before payment).`;
 
   const tool = {
     name: "interpret_message",
@@ -283,6 +306,9 @@ router.post(
           if (interpretation?.intent === "faq" && interpretation.faq_id) {
             const faq = FAQS.find((f) => f.id === interpretation.faq_id);
             if (faq) {
+              for (const imageUrl of faq.images || []) {
+                await sendImage(senderId, imageUrl);
+              }
               await sendMessage(senderId, faq.answer);
               continue;
             }
@@ -304,6 +330,9 @@ router.post(
             // product matcher so the bot still responds to something.
             const faq = matchFaq(text);
             if (faq) {
+              for (const imageUrl of faq.images || []) {
+                await sendImage(senderId, imageUrl);
+              }
               await sendMessage(senderId, faq.answer);
               continue;
             }
