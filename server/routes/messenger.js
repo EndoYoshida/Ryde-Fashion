@@ -33,6 +33,26 @@ const GEMINI_MODEL = "gemini-3.6-flash"; // free tier — Google's current-gen F
 const APP_ORIGIN = process.env.APP_ORIGIN || "http://localhost:4000";
 const faqImage = (filename) => `${APP_ORIGIN}/public/messenger/${filename}`;
 
+// OWNER_PSID - your OWN personal Messenger PSID (Page-Scoped ID), so the
+// bot can message YOU directly when a customer asks for a human. This is
+// NOT your Facebook user ID or Page ID — it's an ID Meta generates that's
+// specific to you-as-a-user-of-this-Page. To find it:
+//   1. Deploy this update, then message your own Page from your PERSONAL
+//      Facebook account (not the Page's) — send literally anything.
+//   2. Open your Render dashboard → this service → Logs. You'll see a
+//      line like: [messenger] incoming message from PSID 1234567890123: ...
+//   3. Copy that number into OWNER_PSID in Render → Environment, then
+//      redeploy.
+// Note: Messenger's standard send API can only message someone who has
+// messaged the Page within the last 24 hours — so message your Page
+// yourself every so often (or whenever you're expecting handoffs) to keep
+// that window open.
+const OWNER_PSID = process.env.OWNER_PSID;
+// STORE_NAME - shown in the bot's own replies so it can refer to itself
+// ("Hi, this is Ella from RydeFashion!") instead of talking like a
+// generic script. Change this if the shop's display name changes.
+const STORE_NAME = process.env.STORE_NAME || "RydeFashion";
+
 // --- 1. Webhook verification (Meta calls this once, when you save the
 // callback URL in the dashboard) --------------------------------------
 router.get("/webhook", (req, res) => {
@@ -175,7 +195,10 @@ const FAQS = [
   {
     id: "human_agent",
     keywords: ["human agent", "customer service", "totoong tao", "customer support", "talk to a person", "talk to someone", "human po", "makausap ang tao"],
-    answer: `Sure — I've flagged this for our team and someone will follow up with you shortly! 🙏 Feel free to describe what you need in the meantime.`,
+    // NOTE: this text is grounding for compose (see composeReply below) —
+    // the actual owner notification happens in the webhook handler via
+    // notifyOwner(), triggered whenever this faq_id is matched.
+    answer: `Sure — I've let our team know and the shop owner will follow up with you here shortly! 🙏 Feel free to describe what you need in the meantime.`,
   },
 ];
 
@@ -203,6 +226,53 @@ function recordFailure(senderId) {
 
 function resetFailure(senderId) {
   failCounts.delete(senderId);
+}
+
+// --- Short conversation memory ---------------------------------------
+// A few recent turns per customer, so replies feel like an ongoing chat
+// instead of restarting cold every message (e.g. not re-greeting them,
+// remembering what they just asked about). In-memory only, same caveat
+// as failCounts — resets on redeploy, which is fine at this volume.
+const HISTORY_TURNS = 6; // customer+bot messages kept, not full pairs
+const histories = new Map(); // senderId -> [{role: "customer"|"bot", text}]
+
+function pushHistory(senderId, role, text) {
+  const hist = histories.get(senderId) || [];
+  hist.push({ role, text });
+  while (hist.length > HISTORY_TURNS) hist.shift();
+  histories.set(senderId, hist);
+}
+
+function historyText(senderId) {
+  const hist = histories.get(senderId) || [];
+  return hist.map((h) => `${h.role === "customer" ? "Customer" : "You"}: ${h.text}`).join("\n");
+}
+
+// --- Human handoff: actually pings the owner ---------------------------
+// Sends a real Messenger DM to OWNER_PSID with the customer's message and
+// a link straight into that conversation in Meta's Page Inbox, so you can
+// jump in and reply as the Page. If OWNER_PSID isn't set yet, this just
+// logs a warning instead of failing the whole request.
+function inboxLink(senderId) {
+  // Deep link into the Page Inbox for this specific conversation. Requires
+  // knowing the Page ID — if you'd rather skip that, PAGE_ID can be left
+  // unset and this falls back to the general inbox link.
+  const pageId = process.env.FB_PAGE_ID;
+  return pageId
+    ? `https://www.facebook.com/${pageId}/messages/?mid=${senderId}`
+    : `https://www.facebook.com/messages/t/${senderId}`;
+}
+
+async function notifyOwner(senderId, customerText) {
+  if (!OWNER_PSID) {
+    console.warn("OWNER_PSID not set — can't ping owner. See setup notes near the top of this file.");
+    return;
+  }
+  const preview = customerText.length > 300 ? customerText.slice(0, 300) + "…" : customerText;
+  await sendMessage(
+    OWNER_PSID,
+    `🔔 A customer wants to talk to you directly.\n\nTheir last message: "${preview}"\n\nReply here: ${inboxLink(senderId)}`
+  );
 }
 
 // --- AI understanding layer (Gemini) ---------------------------------
@@ -302,6 +372,59 @@ async function interpretMessage(text) {
   const parts = data.candidates?.[0]?.content?.parts || [];
   const functionCall = parts.find((p) => p.functionCall)?.functionCall;
   return functionCall?.args || null;
+}
+
+// --- Composes the actual reply text -----------------------------------
+// This is what makes the bot sound like a person chatting, not a script
+// picking a canned line. It takes whatever FACTS are true for this turn
+// (an FAQ answer, product search results, order details, or nothing) and
+// asks Gemini to write a natural reply that:
+//   - mirrors the customer's language/register (English, Tagalog, or a
+//     Taglish mix — whatever THEY just used)
+//   - stays grounded strictly in the facts passed in — never invents a
+//     price, policy, or stock number that isn't given
+//   - reads like a real shop assistant, using the last few turns as
+//     context, not a stateless one-off reply
+// Returns plain text (or null if Gemini is unavailable, so callers should
+// have a canned fallback ready).
+async function composeReply({ customerText, facts, history }) {
+  if (!GEMINI_API_KEY) return null;
+
+  const system =
+    `You are chatting as a real staff member on the Facebook Page Messenger inbox for ${STORE_NAME}, ` +
+    `a Philippines-based shop selling authentic (brand new, never used) bags, watches, apparel, and ` +
+    `accessories. You're mid-conversation with a customer on Messenger — reply the way a helpful, ` +
+    `warm human shop assistant actually types, not like a script or FAQ bot.\n\n` +
+    `Language: mirror whatever mix the customer just used — if they wrote in English reply in English, ` +
+    `if Tagalog reply in Tagalog, if Taglish match that same blend and casualness. Don't switch to a ` +
+    `different language than they used.\n\n` +
+    `Facts you can use — these are the ONLY facts you know are true. Do not add, guess, or invent any ` +
+    `price, policy detail, stock count, or claim that isn't in here:\n${facts || "(no specific facts for this turn — this is general chat/small talk)"}\n\n` +
+    `Recent conversation so far (may be empty if this is the first message):\n${history || "(none yet)"}\n\n` +
+    `Keep it short — a real person's Messenger reply, not an essay. Emojis are fine but don't overdo it. ` +
+    `If the customer drifts to something unrelated to the shop, gently steer back to how you can help ` +
+    `them with a product or order. Reply with ONLY the message text — no labels, no quotes around it.`;
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: system }] },
+        contents: [{ role: "user", parts: [{ text: customerText }] }],
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    console.error("Gemini compose call failed:", await res.text());
+    return null;
+  }
+
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
+  return text.trim() || null;
 }
 
 // --- Product lookup: matches on brand, name, or category. Not fuzzy —
@@ -404,7 +527,33 @@ router.post(
         const text = event.message?.text;
         if (!senderId || !text) continue; // skip non-text (stickers, etc.)
 
+        // Also doubles as how you find your own OWNER_PSID — see the
+        // setup note near the top of this file.
+        console.log(`[messenger] incoming message from PSID ${senderId}: ${text}`);
+
         try {
+          pushHistory(senderId, "customer", text);
+
+          // Turns a fact (or an instruction describing what to say) into
+          // an actual natural-language reply in the customer's own
+          // language/register, using recent conversation as context. If
+          // Gemini is down, falls back to fallbackText — which MUST be
+          // safe to show verbatim (never pass raw instructions as the
+          // fallback, only real customer-facing copy).
+          const replyNaturally = async (facts, fallbackText = facts) => {
+            const composed = await composeReply({
+              customerText: text,
+              facts,
+              history: historyText(senderId),
+            }).catch((err) => {
+              console.error("Gemini compose failed:", err);
+              return null;
+            });
+            const finalText = composed || fallbackText;
+            await sendMessage(senderId, finalText);
+            pushHistory(senderId, "bot", finalText);
+          };
+
           // Ask Gemini what the customer means first — handles Tagalog/
           // Taglish/typos that a fixed keyword list can't anticipate.
           // Falls back to the old keyword-based logic if Gemini is
@@ -423,14 +572,17 @@ router.post(
               for (const imageUrl of faq.images || []) {
                 await sendImage(senderId, imageUrl);
               }
-              await sendMessage(senderId, faq.answer);
+              await replyNaturally(faq.answer);
+              if (faq.id === "human_agent") await notifyOwner(senderId, text);
               continue;
             }
           }
 
           if (interpretation?.intent === "other") {
-            await sendMessage(
-              senderId,
+            await replyNaturally(
+              `Nothing specific matched — this looks like a greeting, small talk, or something off-topic. ` +
+                `Respond warmly and briefly, then invite them to ask about a product (brand/item/category) ` +
+                `or a store policy (shipping, COD, returns, payment, etc.).`,
               `Hi! 👋 Ask me about a product (brand, item, or category) for price & stock, or ask about shipping, COD, returns, payment, etc.`
             );
             continue;
@@ -439,7 +591,10 @@ router.post(
           if (interpretation?.intent === "order_status") {
             const orderId = interpretation.order_id?.trim();
             if (!orderId) {
-              await sendMessage(senderId, `Sure — what's your order number? You can find it on your order confirmation. 🔎`);
+              await replyNaturally(
+                `Ask the customer for their order number so you can look it up.`,
+                `Sure — what's your order number? You can find it on your order confirmation. 🔎`
+              );
               continue;
             }
 
@@ -450,18 +605,32 @@ router.post(
 
             if (!order) {
               const failCount = recordFailure(senderId);
-              await sendMessage(senderId, `I couldn't find an order with that number — could you double-check it? It's on your order confirmation. 🔎`);
+              await replyNaturally(
+                `No order was found with number "${orderId}". Ask them to double-check it against their order confirmation.`,
+                `I couldn't find an order with that number — could you double-check it? It's on your order confirmation. 🔎`
+              );
               if (failCount >= HUMAN_HANDOFF_THRESHOLD) {
-                await sendMessage(senderId, HUMAN_HANDOFF_MESSAGE);
+                await notifyOwner(senderId, text);
+                await replyNaturally(
+                  `You're having trouble helping with this. Let them know you've flagged it for the shop owner, who'll follow up here shortly.`,
+                  HUMAN_HANDOFF_MESSAGE
+                );
                 resetFailure(senderId);
               }
               continue;
             }
 
+            // Order/payment data is sent exactly as stored — not passed
+            // through Gemini — so numbers, status, and totals are never
+            // paraphrased. Only the short lead-in line is composed.
             resetFailure(senderId);
             const items = await db
               .prepare(`SELECT name, qty FROM order_items WHERE order_id = $1 ORDER BY id`)
               .all(orderId);
+            await replyNaturally(
+              `Found their order. Write ONLY a short, warm one-line lead-in (in their language) saying you found it — the exact order details will be sent right after, so don't restate any numbers/status yourself.`,
+              `Here's your order:`
+            );
             await sendMessage(senderId, formatOrderStatusReply(order, items));
             continue;
           }
@@ -471,21 +640,29 @@ router.post(
           // gets its own reply (categories to choose from) rather than the
           // "couldn't find a match" message, which reads oddly when nothing
           // was actually searched for.
-          const VAGUE_PRODUCT_REPLY = `We carry bags, watches, apparel, and accessories 👜⌚👕 — which category or brand are you looking for?`;
+          const VAGUE_PRODUCT_FACTS =
+            `The customer asked generally what's available without naming an item/brand/category. Tell them ` +
+            `(in their language) that the shop carries bags, watches, apparel, and accessories, and ask which ` +
+            `category or brand they're interested in.`;
+          const VAGUE_PRODUCT_FALLBACK = `We carry bags, watches, apparel, and accessories 👜⌚👕 — which category or brand are you looking for?`;
 
           let products;
+          let usedFallback = false;
           if (interpretation?.intent === "product_search") {
             if (!interpretation.search_terms?.length) {
               // Gemini recognized this as a product question but found no
               // specific item/brand/category to search on — i.e. genuinely
               // vague, not a failed extraction worth retrying on raw text.
-              await sendMessage(senderId, VAGUE_PRODUCT_REPLY);
+              await replyNaturally(VAGUE_PRODUCT_FACTS, VAGUE_PRODUCT_FALLBACK);
               continue;
             }
             products = await searchProductsByWords(interpretation.search_terms.map((w) => w.toLowerCase()));
           } else {
             // Gemini unavailable/failed — fall back to the keyword FAQ +
             // product matcher so the bot still responds to something.
+            // (No compose call here either, since Gemini being down is
+            // the reason we're in this branch — send canned copy as-is.)
+            usedFallback = true;
             const faq = matchFaq(text);
             if (faq) {
               resetFailure(senderId);
@@ -493,13 +670,15 @@ router.post(
                 await sendImage(senderId, imageUrl);
               }
               await sendMessage(senderId, faq.answer);
+              pushHistory(senderId, "bot", faq.answer);
+              if (faq.id === "human_agent") await notifyOwner(senderId, text);
               continue;
             }
             const fallbackWords = extractSearchWords(text);
             if (fallbackWords.length === 0) {
               // Same vague-question case, reached via the keyword path
               // instead of Gemini (e.g. Gemini is down).
-              await sendMessage(senderId, VAGUE_PRODUCT_REPLY);
+              await sendMessage(senderId, VAGUE_PRODUCT_FALLBACK);
               continue;
             }
             products = await searchProductsByWords(fallbackWords);
@@ -507,9 +686,27 @@ router.post(
 
           if (products.length === 0) {
             const failCount = recordFailure(senderId);
-            await sendMessage(senderId, `Sorry, I couldn't find a product matching "${text}". Could you share the exact product name or brand?`);
+            if (usedFallback) {
+              const msg = `Sorry, I couldn't find a product matching "${text}". Could you share the exact product name or brand?`;
+              await sendMessage(senderId, msg);
+              pushHistory(senderId, "bot", msg);
+            } else {
+              await replyNaturally(
+                `No products matched the customer's search: "${text}". Ask them to share the exact product name or brand so you can check again.`,
+                `Sorry, I couldn't find a product matching "${text}". Could you share the exact product name or brand?`
+              );
+            }
             if (failCount >= HUMAN_HANDOFF_THRESHOLD) {
-              await sendMessage(senderId, HUMAN_HANDOFF_MESSAGE);
+              await notifyOwner(senderId, text);
+              if (usedFallback) {
+                await sendMessage(senderId, HUMAN_HANDOFF_MESSAGE);
+                pushHistory(senderId, "bot", HUMAN_HANDOFF_MESSAGE);
+              } else {
+                await replyNaturally(
+                  `You're having trouble helping with this. Let them know you've flagged it for the shop owner, who'll follow up here shortly.`,
+                  HUMAN_HANDOFF_MESSAGE
+                );
+              }
               resetFailure(senderId);
             }
             continue;
@@ -518,9 +715,19 @@ router.post(
           resetFailure(senderId);
           const images = await findFirstImages(products.map((p) => p.id));
 
-          // One photo + its caption per matched product, so each image
-          // stays paired with the right price/stock line instead of
-          // sending a wall of text followed by an unlabeled photo dump.
+          // Photo + exact price/stock line per product stay template-
+          // formatted on purpose — never paraphrased — so numbers are
+          // always exactly what's in the database. Only the short intro
+          // line (sent first) is composed, to match the customer's tone.
+          if (!usedFallback) {
+            await replyNaturally(
+              `Found ${products.length} matching product(s): ${products.map((p) => `${p.brand} ${p.name}`).join(", ")}. ` +
+                `Write ONLY a short, warm one-line intro (in their language) saying you found some options — the ` +
+                `actual photos and prices are sent right after this, so don't restate prices/stock yourself.`,
+              `Here's what I found:`
+            );
+          }
+
           for (const p of products) {
             const imageUrl = images.get(p.id);
             if (imageUrl) await sendImage(senderId, imageUrl);
