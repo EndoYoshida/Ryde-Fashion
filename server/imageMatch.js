@@ -144,13 +144,39 @@ export function isConfidentMatch(distance) {
   return distance <= CONFIDENT_MATCH_MAX_DISTANCE;
 }
 
-// --- One-time (or per-new-photo) catalog embedding -----------------------
+// --- Per-photo embedding ---------------------------------------------
+// Embeds ONE product_images row and writes the vector back. Used both by
+// the one-time backfill below AND by routes/products.js right after a
+// new photo is uploaded, so new photos get embedded automatically going
+// forward — no more manual backfill runs needed after the initial one.
+// Best-effort/fire-and-forget by design (same contract as this codebase's
+// other post-save side effects like syncProductToSheet): a slow or failed
+// embed shouldn't hold up the admin's upload request or fail it outright.
+// If it does fail, embedding stays NULL for that row, so it'll be picked
+// up automatically the next time backfillProductEmbeddings() runs.
+// Returns true on success, false on failure (never throws) — callers that
+// care whether it worked can check the return value; fire-and-forget
+// callers can just ignore it.
+export async function embedProductImage(imageId, imageUrl) {
+  try {
+    const embedding = await embedImage(imageUrl);
+    await db
+      .prepare(`UPDATE product_images SET embedding = $1 WHERE id = $2`)
+      .run(toVectorLiteral(embedding), imageId);
+    console.log(`[imageMatch] embedded product_image ${imageId}`);
+    return true;
+  } catch (err) {
+    console.error(`[imageMatch] failed to embed product_image ${imageId}:`, err.message);
+    return false;
+  }
+}
+
+// --- One-time catalog backfill ----------------------------------------
 // Walks every product_images row with no embedding yet, downloads it from
 // Cloudinary, embeds it, and writes the vector back. Safe to re-run —
-// only touches rows where embedding IS NULL, so it picks up new product
-// photos automatically without re-embedding the whole catalog every time.
-// Run this from a one-off script (e.g. `node scripts/backfillEmbeddings.js`)
-// or wire a call to it into wherever product photo uploads happen.
+// only touches rows where embedding IS NULL, so it's harmless to run
+// again later (e.g. to pick up any row embedProductImage failed on).
+// Run this from a one-off script (e.g. `node scripts/backfillEmbeddings.js`).
 export async function backfillProductEmbeddings() {
   const { cloudinaryUrl } = await import("./upload.js");
   const rows = await db
@@ -160,18 +186,7 @@ export async function backfillProductEmbeddings() {
   console.log(`[imageMatch] backfilling embeddings for ${rows.length} product photo(s)...`);
   let done = 0;
   for (const row of rows) {
-    try {
-      const embedding = await embedImage(cloudinaryUrl(row.filename));
-      await db
-        .prepare(`UPDATE product_images SET embedding = $1 WHERE id = $2`)
-        .all(toVectorLiteral(embedding), row.id);
-      done++;
-    } catch (err) {
-      // Keep going — one bad photo (broken URL, transient API error)
-      // shouldn't stop the whole backfill. Re-running later picks up
-      // anything that failed, since embedding stays NULL for it.
-      console.error(`[imageMatch] failed to embed product_image ${row.id}:`, err.message);
-    }
+    if (await embedProductImage(row.id, cloudinaryUrl(row.filename))) done++;
   }
   console.log(`[imageMatch] done — embedded ${done}/${rows.length} photo(s).`);
 }

@@ -1,5 +1,6 @@
 import { db } from "../db/index.js";
-import { deleteCloudinaryImage } from "../upload.js";
+import { deleteCloudinaryImage, cloudinaryUrl } from "../upload.js";
+import { embedProductImage } from "../imageMatch.js";
 import { getSheetsClient, isSheetsSyncConfigured } from "./googleAuth.js";
 import { extractDriveFileId, downloadDriveImage, trashDriveFile } from "./driveImages.js";
 import { rowToProduct, notifyWishlistersBackInStock, notifySubscribersNewProduct } from "../routes/products.js";
@@ -259,9 +260,14 @@ async function syncImagesForProduct(productId, imagesCell) {
     if (await hasDriveImage(productId, fileId)) continue; // already synced, skip re-download
     try {
       const filename = await downloadDriveImage(fileId);
-      await db.prepare(
-        "INSERT INTO product_images (product_id, filename, sort_order, drive_file_id) VALUES (?, ?, ?, ?)"
+      const result = await db.prepare(
+        "INSERT INTO product_images (product_id, filename, sort_order, drive_file_id) VALUES (?, ?, ?, ?) RETURNING id"
       ).run(productId, filename, nextOrder++, fileId);
+      // Fire-and-forget, same reasoning as the admin-upload path in
+      // routes/products.js: embedding calls out to Gemini and shouldn't
+      // slow down (or fail) the sheet sync. If it fails, embedding stays
+      // NULL and backfillProductEmbeddings() picks it up later.
+      embedProductImage(result.lastInsertRowid, cloudinaryUrl(filename));
       added++;
     } catch (err) {
       failed++;

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { upload, cloudinaryUrl, deleteCloudinaryImage } from "../upload.js";
+import { embedProductImage } from "../imageMatch.js";
 import { requireAdmin } from "../auth.js";
 import { requireCustomer } from "../customerAuth.js";
 import { sendBackInStockEmail, sendNewProductEmail } from "../email.js";
@@ -244,10 +245,18 @@ router.post("/:id/images", requireAdmin, upload.array("images", 8), asyncHandler
   const maxOrder = maxRow.m;
 
   const insert = db.prepare(
-    "INSERT INTO product_images (product_id, filename, sort_order) VALUES (?, ?, ?)"
+    "INSERT INTO product_images (product_id, filename, sort_order) VALUES (?, ?, ?) RETURNING id"
   );
   for (let i = 0; i < req.files.length; i++) {
-    await insert.run(req.params.id, req.files[i].filename, maxOrder + 1 + i);
+    const file = req.files[i];
+    const result = await insert.run(req.params.id, file.filename, maxOrder + 1 + i);
+    // Fire-and-forget, same contract as syncProductToSheet/notify* below:
+    // embedding a photo calls out to Gemini and can take a couple seconds,
+    // so it shouldn't hold up the admin's upload response. If it fails
+    // (Gemini down, rate-limited, etc.) it's not lost — embedding stays
+    // NULL for that row and backfillProductEmbeddings() will pick it up
+    // next time it's run.
+    embedProductImage(result.lastInsertRowid, cloudinaryUrl(file.filename));
   }
 
   res.status(201).json({ images: await getImages(req.params.id) });
