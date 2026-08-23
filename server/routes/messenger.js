@@ -49,20 +49,88 @@ function verifySignature(req) {
   }
 }
 
-// --- 3. Very simple product lookup: matches on brand and/or name words.
-// Not fuzzy/AI matching — just an ILIKE search against what's already in
-// your products table. Returns up to 3 matches, each with its id (needed
-// to look up a photo) and price/stock. -----------------------------------
+// --- FAQ answers, checked BEFORE product search --------------------------
+// A message is only checked against product search if it doesn't match one
+// of these first — so "do you do COD?" answers as a policy question instead
+// of failing an (unrelated) product-name search.
+//
+// IMPORTANT: fill in the two marked with [FILL IN] below with your actual
+// policy — everything else here was pulled straight from your existing
+// Auto Reply message in Meta Business Suite, so it's already accurate.
+const FAQS = [
+  {
+    keywords: ["cod", "cash on delivery"],
+    answer: `[FILL IN — do you accept Cash on Delivery? Which areas/couriers?]`,
+  },
+  {
+    keywords: ["shipping", "deliver", "delivery", "ship"],
+    answer: `We offer nationwide shipping 🚚, plus meet-up/pickup if you're nearby.`,
+  },
+  {
+    keywords: ["authentic", "original", "fake", "genuine"],
+    answer: `All our items are authentic and sourced from the US — money-back guaranteed if proven fake. ✅`,
+  },
+  {
+    keywords: ["meet up", "meetup", "pick up", "pickup", "located", "location", "based", "where are you", "saan"],
+    answer: `We're based in Valenzuela City, Metro Manila — meet-up/pickup available there. 📍`,
+  },
+  {
+    keywords: ["return", "exchange", "refund"],
+    answer: `[FILL IN — what's your return/exchange policy, and within how many days?]`,
+  },
+  {
+    keywords: ["payment", "gcash", "bank transfer", "how to pay", "paano magbayad"],
+    answer: `We currently accept GCash and bank transfer. Just let us know once you're ready to order and we'll send payment details. 💳`,
+  },
+  {
+    keywords: ["hours", "open", "close", "opening", "closing", "anong oras"],
+    answer: `We're online and respond from 9AM to 6PM daily. 🕘`,
+  },
+  {
+    keywords: ["brand new", "condition", "used", "preloved", "pre-loved", "bago"],
+    answer: `All our items are brand new — never used. ✨`,
+  },
+  {
+    keywords: ["installment", "installement", "hulugan", "layaway"],
+    answer: `Sorry, we don't offer installment/layaway at the moment — full payment only. 🙏`,
+  },
+];
+
+function matchFaq(text) {
+  const lower = text.toLowerCase();
+  return FAQS.find((f) => f.keywords.some((k) => lower.includes(k)));
+}
+
+// Common filler words in how people actually phrase a question — these
+// get stripped before matching so "how much is the Calvin Klein bag"
+// searches on "calvin klein bag", not on "how"/"much"/"is"/"the" too
+// (which would never match a product name and return nothing). Includes
+// common Taglish phrasing since that's the actual customer base. Gender
+// words are also stripped since products aren't tagged by gender — "bag
+// for men" falls back to matching all bags rather than returning nothing.
+const STOPWORDS = new Set([
+  "how", "much", "is", "are", "the", "a", "an", "for", "of", "do", "does",
+  "you", "have", "in", "stock", "price", "cost", "available", "availability",
+  "please", "po", "ba", "meron", "ba'ng", "magkano", "pa", "may", "ang", "ng",
+  "men", "man", "mens", "women", "woman", "womens", "male", "female",
+]);
+
+// --- 3. Very simple product lookup: matches on brand, name, or category
+// words. Not fuzzy/AI matching — just an ILIKE search against what's
+// already in your products table. Requires every remaining keyword to
+// match (so "Calvin Klein bag" narrows to bags, not every Calvin Klein
+// product) — returns up to 3 matches, each with its id (needed to look up
+// a photo) and price/stock. -------------------------------------------
 async function findProducts(query) {
   const words = query
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .split(/\s+/)
-    .filter((w) => w.length > 1);
+    .filter((w) => w.length > 1 && !STOPWORDS.has(w));
 
   if (words.length === 0) return [];
 
-  const conditions = words.map((_, i) => `(name ILIKE $${i + 1} OR brand ILIKE $${i + 1})`).join(" OR ");
+  const conditions = words.map((_, i) => `(name ILIKE $${i + 1} OR brand ILIKE $${i + 1} OR category ILIKE $${i + 1})`).join(" AND ");
   const params = words.map((w) => `%${w}%`);
 
   const rows = await db
@@ -113,6 +181,12 @@ router.post(
         if (!senderId || !text) continue; // skip non-text (stickers, etc.)
 
         try {
+          const faq = matchFaq(text);
+          if (faq) {
+            await sendMessage(senderId, faq.answer);
+            continue;
+          }
+
           const products = await findProducts(text);
 
           if (products.length === 0) {
