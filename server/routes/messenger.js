@@ -63,6 +63,15 @@ const HANDOFF_MINUTES = Number(process.env.HANDOFF_MINUTES) || 60;
 // ("Hi, this is Ella from RydeFashion!") instead of talking like a
 // generic script. Change this if the shop's display name changes.
 const STORE_NAME = process.env.STORE_NAME || "RydeFashion";
+// SIZE_CHART_TEXT - real measurements for the "which size fits me"
+// advice path (interpretation.intent === "advice"). Left blank by
+// default on purpose: composeReply is instructed to only use facts it's
+// given, so with no chart configured the bot will honestly say it can't
+// give sizing advice yet, rather than a real chart just not being wired
+// up making it invent one. Fill this in with your actual measurements,
+// e.g.:
+//   "S: chest 36in, length 26in | M: chest 38in, length 27in | L: chest 40in, length 28in"
+const SIZE_CHART_TEXT = process.env.SIZE_CHART_TEXT || "";
 
 // --- 1. Webhook verification (Meta calls this once, when you save the
 // callback URL in the dashboard) --------------------------------------
@@ -260,6 +269,24 @@ function historyText(senderId) {
   return hist.map((h) => `${h.role === "customer" ? "Customer" : "You"}: ${h.text}`).join("\n");
 }
 
+// --- Focus product: what "it"/"magkano?"/"may XL pa?" refers to --------
+// Set whenever a product search resolves to exactly one product, so a
+// customer doesn't have to re-name the item every follow-up message
+// ("May XL pa?" -> "Magkano?" should resolve to the same product without
+// Gemini having to re-derive it from raw history text each time). Cleared
+// implicitly by just being overwritten on the next resolved search — no
+// explicit expiry, same in-memory/redeploy caveat as histories/failCounts.
+const focusProducts = new Map(); // senderId -> {id, name, brand}
+
+function setFocusProduct(senderId, product) {
+  focusProducts.set(senderId, { id: product.id, name: product.name, brand: product.brand });
+}
+
+function focusProductText(senderId) {
+  const p = focusProducts.get(senderId);
+  return p ? `${p.brand} ${p.name} (id ${p.id})` : null;
+}
+
 // --- Human handoff: actually pings the owner ---------------------------
 // Sends a real Messenger DM to OWNER_PSID with the customer's message and
 // a link straight into that conversation in Meta's Page Inbox, so you can
@@ -320,7 +347,11 @@ function isHandoffActive(senderId) {
 // Returns the same shape the rest of this file expects —
 // { intent, faq_id?, search_terms? } — regardless of which AI provider
 // is behind it, so nothing downstream needed to change.
-async function interpretMessage(text) {
+// `history` and `focusProduct` give Gemini what it needs to resolve
+// pronoun-ish follow-ups ("magkano?", "may XL pa?") without the customer
+// re-naming the item every message — see focusProducts above. Returns
+// { intents: [...] } (plural — see below) or null if Gemini's unavailable.
+async function interpretMessage(text, { history, focusProduct } = {}) {
   if (!GEMINI_API_KEY) return null;
 
   const faqList = FAQS.map((f) => f.id).join(", ");
@@ -328,7 +359,9 @@ async function interpretMessage(text) {
     `You triage incoming Facebook Messenger messages for a Philippines-based online shop ` +
     `selling authentic (never used) branded bags, watches, apparel, and accessories. ` +
     `Customers write in English, Tagalog, or Taglish, often with typos/shorthand (e.g. "hm" = ` +
-    `"how much", "meron ba" = "do you have"). Classify each message using the interpret_message function. ` +
+    `"how much", "meron ba" = "do you have"). A single message can ask more than one thing at once ` +
+    `(e.g. "Magkano yung black XL? May COD ba?" is a price question AND a COD question) — return ONE ` +
+    `entry in "intents" per distinct question, in the order asked. Most messages only have one.\n\n` +
     `Known FAQ topics: cod (cash on delivery), shipping (delivery/couriers/areas), authenticity ` +
     `(is it real/legit/registered business), location (where based/meet-up), returns (return/exchange ` +
     `policy), payment (how to pay), hours (business hours), condition (brand new vs used), installment ` +
@@ -337,46 +370,73 @@ async function interpretMessage(text) {
     `delivery_time (how many days delivery takes, ETA), promos (ongoing discounts/sales/vouchers), ` +
     `wholesale (bulk/wholesale orders), actual_photos (asking for real photos of the actual unit, not ` +
     `catalog photos), cancellation (can I cancel my order), sizes_colors (asking what sizes/colors are ` +
-    `available — we don't track this per-item yet, so this always gets a generic reply), human_agent ` +
-    `(explicitly asking to talk to a real person/customer support). ` +
-    `Use the "order_status" intent when the customer is asking about the status/delivery progress of an ` +
-    `order they ALREADY PLACED (e.g. "kailan po dadating yung order ko", "order status po", "nasaan na po order ko") — ` +
-    `this is different from delivery_time, which is a general "how long does shipping take" question, ` +
-    `not asking about a specific existing order. If they included an order number in the message, put it in order_id.`;
+    `available IN GENERAL, not about a specific product — use "product_search" with color/size instead ` +
+    `when they're asking about a specific item), human_agent (explicitly asking to talk to a real ` +
+    `person/customer support).\n\n` +
+    `Use "order_status" when asking about an order they ALREADY PLACED (e.g. "kailan po dadating yung ` +
+    `order ko", "nasaan na po order ko") — different from delivery_time, which is a general "how long ` +
+    `does shipping take" question. Include order_id if they gave a number.\n\n` +
+    `Use "advice" for a judgment call the customer wants help with — which size/fit suits them, ` +
+    `comparing options ("oversized or regular?"), whether they should get XL vs XXL — as opposed to a ` +
+    `plain fact lookup. Put a short restatement of what they want judged in advice_question.\n\n` +
+    `For "product_search": search_terms are the product/brand/category keywords in ENGLISH, translated ` +
+    `if Tagalog, filler words removed (e.g. "meron ba kayo bag for men" -> ["bag"]). Set color/size ` +
+    `ONLY if the customer named them (e.g. "may black XL?" -> color: "black", size: "XL"). Leave ` +
+    `search_terms EMPTY (not omitted) when the customer clearly means the item already being discussed ` +
+    `and gives no new name for it (e.g. a bare "magkano?" or "may XL pa?" right after a product came up) ` +
+    `— that's resolved from conversation context, not a new search.\n\n` +
+    (focusProduct
+      ? `Product currently being discussed (use this for pronoun-ish follow-ups with no new item named): ${focusProduct}\n\n`
+      : `No product is currently being discussed.\n\n`) +
+    `Recent conversation (may be empty):\n${history || "(none yet)"}`;
 
   // Same schema shape Claude used (input_schema) — Gemini's function
   // declarations accept the same JSON-schema subset, just under a
   // different key ("parameters" instead of "input_schema").
   const functionDeclaration = {
     name: "interpret_message",
-    description: "Classify a customer message so the store's bot can respond correctly.",
+    description: "Classify a customer message — possibly multiple questions at once — so the store's bot can respond correctly.",
     parameters: {
       type: "object",
       properties: {
-        intent: {
-          type: "string",
-          enum: ["faq", "product_search", "order_status", "other"],
-          description:
-            "'faq' for a policy/store question matching one of the known topics, 'product_search' when they're asking about a specific product/brand/category, 'order_status' when asking about the status of an order they already placed, 'other' for greetings/small talk/anything else.",
-        },
-        faq_id: {
-          type: "string",
-          enum: FAQS.map((f) => f.id),
-          description: `Only set when intent is "faq". One of: ${faqList}.`,
-        },
-        search_terms: {
+        intents: {
           type: "array",
-          items: { type: "string" },
-          description:
-            'Only set when intent is "product_search". The product/brand/category keywords in ENGLISH, translated if the message was in Tagalog, with filler words removed. E.g. "meron ba kayo bag for men" -> ["bag"].',
-        },
-        order_id: {
-          type: "string",
-          description:
-            'Only set when intent is "order_status" AND the customer included an order number/ID in their message. Extract it exactly as written — do not guess or invent one if they didn\'t provide it.',
+          description: "One entry per distinct question in the message, in the order asked. Almost always length 1.",
+          items: {
+            type: "object",
+            properties: {
+              intent: {
+                type: "string",
+                enum: ["faq", "product_search", "order_status", "advice", "other"],
+                description:
+                  "'faq' for a policy/store question, 'product_search' for a specific product/brand/category (including price/stock/color/size questions about it), 'order_status' for an existing order, 'advice' for a judgment call (which size/fit/option), 'other' for greetings/small talk/anything else.",
+              },
+              faq_id: {
+                type: "string",
+                enum: FAQS.map((f) => f.id),
+                description: `Only set when intent is "faq". One of: ${faqList}.`,
+              },
+              search_terms: {
+                type: "array",
+                items: { type: "string" },
+                description: 'Only set when intent is "product_search". Empty array if referring back to the product already in context.',
+              },
+              color: { type: "string", description: 'Only set when intent is "product_search" and a color was named.' },
+              size: { type: "string", description: 'Only set when intent is "product_search" and a size was named.' },
+              order_id: {
+                type: "string",
+                description: 'Only set when intent is "order_status" AND an order number was given. Never guess one.',
+              },
+              advice_question: {
+                type: "string",
+                description: 'Only set when intent is "advice". A short restatement of the judgment call being asked, in English.',
+              },
+            },
+            required: ["intent"],
+          },
         },
       },
-      required: ["intent"],
+      required: ["intents"],
     },
   };
 
@@ -406,7 +466,8 @@ async function interpretMessage(text) {
   const data = await res.json();
   const parts = data.candidates?.[0]?.content?.parts || [];
   const functionCall = parts.find((p) => p.functionCall)?.functionCall;
-  return functionCall?.args || null;
+  const intents = functionCall?.args?.intents;
+  return Array.isArray(intents) && intents.length > 0 ? { intents } : null;
 }
 
 // --- Composes the actual reply text -----------------------------------
@@ -466,17 +527,61 @@ async function composeReply({ customerText, facts, history }) {
 // just an ILIKE search against what's already in your products table.
 // Requires every given word to match (so ["calvin","klein","bag"] narrows
 // to bags, not every Calvin Klein product) — returns up to 3 matches, each
-// with its id (needed to look up a photo) and price/stock. ----------------
-async function searchProductsByWords(words) {
-  if (words.length === 0) return [];
+// with its id (needed to look up a photo) and price/stock.
+//
+// color/size (optional) narrow further via product_variants — a product
+// with no variant rows at all (nothing ever entered in the sheet's
+// Variants column for it) is treated as "not tracked per-variant" and
+// still matches on name/brand/category alone, same as before this was
+// added, rather than being excluded just because it has no variants.
+async function searchProducts({ words = [], color, size } = {}) {
+  if (words.length === 0 && !color && !size) return [];
 
-  const conditions = words.map((_, i) => `(name ILIKE $${i + 1} OR brand ILIKE $${i + 1} OR category ILIKE $${i + 1})`).join(" AND ");
-  const params = words.map((w) => `%${w}%`);
+  const params = [];
+  const wordConditions = words.map((w) => {
+    params.push(`%${w}%`);
+    const i = params.length;
+    return `(p.name ILIKE $${i} OR p.brand ILIKE $${i} OR p.category ILIKE $${i})`;
+  });
 
+  let variantJoin = "";
+  const variantConditions = [];
+  if (color || size) {
+    variantJoin = "JOIN product_variants v ON v.product_id = p.id";
+    if (color) {
+      params.push(`%${color}%`);
+      variantConditions.push(`v.color ILIKE $${params.length}`);
+    }
+    if (size) {
+      params.push(size);
+      variantConditions.push(`v.size ILIKE $${params.length}`);
+    }
+  }
+
+  const where = [...wordConditions, ...variantConditions].join(" AND ") || "TRUE";
   const rows = await db
-    .prepare(`SELECT id, name, brand, price, stock, status FROM products WHERE ${conditions} ORDER BY name LIMIT 3`)
+    .prepare(
+      `SELECT DISTINCT p.id, p.name, p.brand, p.price, p.stock, p.status
+       FROM products p ${variantJoin}
+       WHERE ${where}
+       ORDER BY p.name LIMIT 3`
+    )
     .all(...params);
   return rows;
+}
+
+// All variant rows for one product — used when a color/size question is
+// about the product already in focus (e.g. "May black pa?" right after a
+// specific item came up), rather than a fresh search.
+async function getProductVariants(productId) {
+  return db.prepare("SELECT color, size, stock FROM product_variants WHERE product_id = ? ORDER BY color, size").all(productId);
+}
+
+function formatVariantAvailability(variants) {
+  if (variants.length === 0) return "No size/color breakdown tracked for this item — just the overall stock count.";
+  return variants
+    .map((v) => `${[v.color, v.size].filter(Boolean).join(" ") || "(no color/size)"}: ${v.stock > 0 ? `${v.stock} in stock` : "out of stock"}`)
+    .join("; ");
 }
 
 // Fallback used only when Gemini is unavailable/unset, or returned
@@ -599,118 +704,24 @@ router.post(
           };
 
           // Ask Gemini what the customer means first — handles Tagalog/
-          // Taglish/typos that a fixed keyword list can't anticipate.
-          // Falls back to the old keyword-based logic if Gemini is
-          // unavailable (no API key, the call fails, or the free-tier
+          // Taglish/typos that a fixed keyword list can't anticipate, and
+          // can return more than one intent for a single message. Falls
+          // back to the old keyword-based single-intent logic if Gemini
+          // is unavailable (no API key, the call fails, or the free-tier
           // rate limit is hit) so the bot degrades gracefully instead of
           // going silent.
-          const interpretation = await interpretMessage(text).catch((err) => {
+          const interpretation = await interpretMessage(text, {
+            history: historyText(senderId),
+            focusProduct: focusProductText(senderId),
+          }).catch((err) => {
             console.error("Gemini interpret failed:", err);
             return null;
           });
 
-          if (interpretation?.intent === "faq" && interpretation.faq_id) {
-            const faq = FAQS.find((f) => f.id === interpretation.faq_id);
-            if (faq) {
-              resetFailure(senderId);
-              for (const imageUrl of faq.images || []) {
-                await sendImage(senderId, imageUrl);
-              }
-              await replyNaturally(faq.answer);
-              if (faq.id === "human_agent") {
-                await notifyOwner(senderId, text);
-                startHandoff(senderId);
-              }
-              continue;
-            }
-          }
-
-          if (interpretation?.intent === "other") {
-            await replyNaturally(
-              `Nothing specific matched — this looks like a greeting, small talk, or something off-topic. ` +
-                `Respond warmly and briefly, then invite them to ask about a product (brand/item/category) ` +
-                `or a store policy (shipping, COD, returns, payment, etc.).`,
-              `Hi! 👋 Ask me about a product (brand, item, or category) for price & stock, or ask about shipping, COD, returns, payment, etc.`
-            );
-            continue;
-          }
-
-          if (interpretation?.intent === "order_status") {
-            const orderId = interpretation.order_id?.trim();
-            if (!orderId) {
-              await replyNaturally(
-                `Ask the customer for their order number so you can look it up.`,
-                `Sure — what's your order number? You can find it on your order confirmation. 🔎`
-              );
-              continue;
-            }
-
-            const orderRows = await db
-              .prepare(`SELECT id, status, payment_status, total, date FROM orders WHERE id = $1`)
-              .all(orderId);
-            const order = orderRows[0];
-
-            if (!order) {
-              const failCount = recordFailure(senderId);
-              await replyNaturally(
-                `No order was found with number "${orderId}". Ask them to double-check it against their order confirmation.`,
-                `I couldn't find an order with that number — could you double-check it? It's on your order confirmation. 🔎`
-              );
-              if (failCount >= HUMAN_HANDOFF_THRESHOLD) {
-                await notifyOwner(senderId, text);
-                startHandoff(senderId);
-                await replyNaturally(
-                  `You're having trouble helping with this. Let them know you're connecting them with ${OWNER_NAME} now, who'll take over here.`,
-                  HUMAN_HANDOFF_MESSAGE
-                );
-                resetFailure(senderId);
-              }
-              continue;
-            }
-
-            // Order/payment data is sent exactly as stored — not passed
-            // through Gemini — so numbers, status, and totals are never
-            // paraphrased. Only the short lead-in line is composed.
-            resetFailure(senderId);
-            const items = await db
-              .prepare(`SELECT name, qty FROM order_items WHERE order_id = $1 ORDER BY id`)
-              .all(orderId);
-            await replyNaturally(
-              `Found their order. Write ONLY a short, warm one-line lead-in (in their language) saying you found it — the exact order details will be sent right after, so don't restate any numbers/status yourself.`,
-              `Here's your order:`
-            );
-            await sendMessage(senderId, formatOrderStatusReply(order, items));
-            continue;
-          }
-
-          // A general "what do you have / what's in stock" question isn't
-          // a failed search — there's genuinely nothing to search on. This
-          // gets its own reply (categories to choose from) rather than the
-          // "couldn't find a match" message, which reads oddly when nothing
-          // was actually searched for.
-          const VAGUE_PRODUCT_FACTS =
-            `The customer asked generally what's available without naming an item/brand/category. Tell them ` +
-            `(in their language) that the shop carries bags, watches, apparel, and accessories, and ask which ` +
-            `category or brand they're interested in.`;
-          const VAGUE_PRODUCT_FALLBACK = `We carry bags, watches, apparel, and accessories 👜⌚👕 — which category or brand are you looking for?`;
-
-          let products;
-          let usedFallback = false;
-          if (interpretation?.intent === "product_search") {
-            if (!interpretation.search_terms?.length) {
-              // Gemini recognized this as a product question but found no
-              // specific item/brand/category to search on — i.e. genuinely
-              // vague, not a failed extraction worth retrying on raw text.
-              await replyNaturally(VAGUE_PRODUCT_FACTS, VAGUE_PRODUCT_FALLBACK);
-              continue;
-            }
-            products = await searchProductsByWords(interpretation.search_terms.map((w) => w.toLowerCase()));
-          } else {
-            // Gemini unavailable/failed — fall back to the keyword FAQ +
-            // product matcher so the bot still responds to something.
-            // (No compose call here either, since Gemini being down is
-            // the reason we're in this branch — send canned copy as-is.)
-            usedFallback = true;
+          if (!interpretation) {
+            // --- Gemini unavailable/failed: old single-shot keyword path.
+            // No compose call here either, since Gemini being down is the
+            // reason we're in this branch — send canned copy as-is.
             const faq = matchFaq(text);
             if (faq) {
               resetFailure(senderId);
@@ -727,63 +738,189 @@ router.post(
             }
             const fallbackWords = extractSearchWords(text);
             if (fallbackWords.length === 0) {
-              // Same vague-question case, reached via the keyword path
-              // instead of Gemini (e.g. Gemini is down).
-              await sendMessage(senderId, VAGUE_PRODUCT_FALLBACK);
+              const msg = `We carry bags, watches, apparel, and accessories 👜⌚👕 — which category or brand are you looking for?`;
+              await sendMessage(senderId, msg);
+              pushHistory(senderId, "bot", msg);
               continue;
             }
-            products = await searchProductsByWords(fallbackWords);
-          }
-
-          if (products.length === 0) {
-            const failCount = recordFailure(senderId);
-            if (usedFallback) {
+            const products = await searchProducts({ words: fallbackWords });
+            if (products.length === 0) {
+              const failCount = recordFailure(senderId);
               const msg = `Sorry, I couldn't find a product matching "${text}". Could you share the exact product name or brand?`;
               await sendMessage(senderId, msg);
               pushHistory(senderId, "bot", msg);
-            } else {
-              await replyNaturally(
-                `No products matched the customer's search: "${text}". Ask them to share the exact product name or brand so you can check again.`,
-                `Sorry, I couldn't find a product matching "${text}". Could you share the exact product name or brand?`
-              );
-            }
-            if (failCount >= HUMAN_HANDOFF_THRESHOLD) {
-              await notifyOwner(senderId, text);
-              startHandoff(senderId);
-              if (usedFallback) {
+              if (failCount >= HUMAN_HANDOFF_THRESHOLD) {
+                await notifyOwner(senderId, text);
+                startHandoff(senderId);
                 await sendMessage(senderId, HUMAN_HANDOFF_MESSAGE);
                 pushHistory(senderId, "bot", HUMAN_HANDOFF_MESSAGE);
-              } else {
-                await replyNaturally(
-                  `You're having trouble helping with this. Let them know you're connecting them with ${OWNER_NAME} now, who'll take over here.`,
-                  HUMAN_HANDOFF_MESSAGE
-                );
+                resetFailure(senderId);
               }
-              resetFailure(senderId);
+              continue;
+            }
+            resetFailure(senderId);
+            if (products.length === 1) setFocusProduct(senderId, products[0]);
+            const images = await findFirstImages(products.map((p) => p.id));
+            for (const p of products) {
+              const imageUrl = images.get(p.id);
+              if (imageUrl) await sendImage(senderId, imageUrl);
+              await sendMessage(senderId, formatReplyLine(p));
             }
             continue;
           }
 
-          resetFailure(senderId);
-          const images = await findFirstImages(products.map((p) => p.id));
+          // --- Gemini path: walk each detected intent, building one
+          // combined `facts` string for a single composed reply, plus a
+          // list of template-formatted blocks (photos, price lines, order
+          // details — anything with real numbers) to send right after it,
+          // in the same order the questions were asked. Numbers/stock/
+          // prices/order totals NEVER go through compose — only the short
+          // intro does — same guarantee as the original single-intent code.
+          const factsParts = [];
+          const afterReply = []; // async () => void, run in order after the composed intro
+          let anyResolved = false; // at least one intent found something real
+          let anyFailed = false; // at least one intent found nothing
+          let humanAgentRequested = false;
 
-          // Photo + exact price/stock line per product stay template-
-          // formatted on purpose — never paraphrased — so numbers are
-          // always exactly what's in the database. Only the short intro
-          // line (sent first) is composed, to match the customer's tone.
-          if (!usedFallback) {
-            await replyNaturally(
-              `Found ${products.length} matching product(s): ${products.map((p) => `${p.brand} ${p.name}`).join(", ")}. ` +
-                `Write ONLY a short, warm one-line intro (in their language) saying you found some options — the ` +
-                `actual photos and prices are sent right after this, so don't restate prices/stock yourself.`,
-              `Here's what I found:`
-            );
+          for (const item of interpretation.intents) {
+            if (item.intent === "faq" && item.faq_id) {
+              const faq = FAQS.find((f) => f.id === item.faq_id);
+              if (faq) {
+                anyResolved = true;
+                factsParts.push(faq.answer);
+                if (faq.images?.length) afterReply.push(async () => {
+                  for (const imageUrl of faq.images) await sendImage(senderId, imageUrl);
+                });
+                if (faq.id === "human_agent") humanAgentRequested = true;
+                continue;
+              }
+            }
+
+            if (item.intent === "other") {
+              factsParts.push(
+                `One part of their message was a greeting/small talk/something off-topic — acknowledge it warmly and briefly.`
+              );
+              continue;
+            }
+
+            if (item.intent === "order_status") {
+              const orderId = item.order_id?.trim();
+              if (!orderId) {
+                factsParts.push(`They're asking about an order but didn't give an order number — ask for it.`);
+                continue;
+              }
+              const order = (await db.prepare(`SELECT id, status, payment_status, total, date FROM orders WHERE id = $1`).all(orderId))[0];
+              if (!order) {
+                anyFailed = true;
+                factsParts.push(`No order was found with number "${orderId}" — ask them to double-check it against their order confirmation.`);
+                continue;
+              }
+              anyResolved = true;
+              const items = await db.prepare(`SELECT name, qty FROM order_items WHERE order_id = $1 ORDER BY id`).all(orderId);
+              factsParts.push(`Found their order — the exact details are sent right after your reply, so don't restate any numbers/status yourself.`);
+              afterReply.push(async () => sendMessage(senderId, formatOrderStatusReply(order, items)));
+              continue;
+            }
+
+            if (item.intent === "advice") {
+              const focus = focusProducts.get(senderId);
+              const chunks = [`They want help deciding: "${item.advice_question || text}".`];
+              if (focus) chunks.push(`Product being discussed: ${focus.brand} ${focus.name}.`);
+              chunks.push(
+                SIZE_CHART_TEXT
+                  ? `Size chart (only real measurements you may use): ${SIZE_CHART_TEXT}`
+                  : `No size chart is configured yet — if this needs actual measurements to answer well, say you'll have ${OWNER_NAME} confirm sizing, don't guess a chart.`
+              );
+              factsParts.push(chunks.join(" "));
+              anyResolved = true;
+              continue;
+            }
+
+            if (item.intent === "product_search") {
+              const words = (item.search_terms || []).map((w) => w.toLowerCase());
+              const focus = focusProducts.get(senderId);
+
+              let products;
+              if (words.length === 0 && focus) {
+                // No new item named — resolved from context (focusProduct).
+                products = await db
+                  .prepare("SELECT id, name, brand, price, stock, status FROM products WHERE id = $1")
+                  .all(focus.id);
+              } else if (words.length === 0) {
+                anyFailed = true;
+                factsParts.push(
+                  `They asked about a product/price/stock but named nothing specific, and nothing was discussed yet either. ` +
+                  `Tell them the shop carries bags, watches, apparel, and accessories, and ask which category or brand.`
+                );
+                continue;
+              } else {
+                products = await searchProducts({ words, color: item.color, size: item.size });
+              }
+
+              if (products.length === 0) {
+                anyFailed = true;
+                factsParts.push(`No product matched "${(item.search_terms || []).join(" ") || text}" — ask them to share the exact product name or brand.`);
+                continue;
+              }
+
+              anyResolved = true;
+              if (products.length === 1) setFocusProduct(senderId, products[0]);
+              factsParts.push(
+                `Found ${products.length} matching product(s): ${products.map((p) => `${p.brand} ${p.name}`).join(", ")}. ` +
+                `Photos/prices are sent right after your reply — don't restate prices/stock yourself.`
+              );
+
+              if (item.color || item.size) {
+                const productForVariants = products.length === 1 ? products[0] : null;
+                if (productForVariants) {
+                  const variants = await getProductVariants(productForVariants.id);
+                  factsParts.push(`Availability by color/size for that item: ${formatVariantAvailability(variants)}`);
+                }
+              }
+
+              afterReply.push(async () => {
+                const images = await findFirstImages(products.map((p) => p.id));
+                for (const p of products) {
+                  const imageUrl = images.get(p.id);
+                  if (imageUrl) await sendImage(senderId, imageUrl);
+                  await sendMessage(senderId, formatReplyLine(p));
+                }
+              });
+            }
           }
 
-          for (const p of products) {
-            const imageUrl = images.get(p.id);
-            if (imageUrl) await sendImage(senderId, imageUrl);
-            await sendMessage(senderId, formatReplyLine(p));
+          if (factsParts.length === 0) {
+            // Nothing recognizable came back at all (shouldn't normally
+            // happen since Gemini always returns at least one intent, but
+            // stay safe rather than silent).
+            await replyNaturally(
+              `Nothing specific matched — respond warmly and briefly, then invite them to ask about a product or a store policy.`,
+              `Hi! 👋 Ask me about a product (brand, item, or category) for price & stock, or ask about shipping, COD, returns, payment, etc.`
+            );
+            continue;
+          }
+
+          await replyNaturally(factsParts.join("\n"));
+          for (const step of afterReply) await step();
+
+          if (humanAgentRequested) {
+            await notifyOwner(senderId, text);
+            startHandoff(senderId);
+          }
+
+          if (anyFailed && !anyResolved) {
+            const failCount = recordFailure(senderId);
+            if (failCount >= HUMAN_HANDOFF_THRESHOLD && !humanAgentRequested) {
+              await notifyOwner(senderId, text);
+              startHandoff(senderId);
+              await replyNaturally(
+                `You're having trouble helping with this. Let them know you're connecting them with ${OWNER_NAME} now, who'll take over here.`,
+                HUMAN_HANDOFF_MESSAGE
+              );
+              resetFailure(senderId);
+            }
+          } else if (anyResolved) {
+            resetFailure(senderId);
           }
         } catch (err) {
           console.error("Messenger auto-reply failed:", err);

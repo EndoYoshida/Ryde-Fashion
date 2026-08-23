@@ -40,6 +40,29 @@ async function getImages(productId) {
   return rows.map((row) => ({ id: row.id, url: cloudinaryUrl(row.filename) }));
 }
 
+async function getVariants(productId) {
+  const rows = await db.prepare("SELECT id, color, size, stock FROM product_variants WHERE product_id = ? ORDER BY color, size")
+    .all(productId);
+  return rows.map((row) => ({ id: row.id, color: row.color, size: row.size, stock: row.stock }));
+}
+
+// Replaces every variant row for a product in one go — same "no stable
+// identity per variant" reasoning as the sheet sync side, so a full
+// replace on every save is simpler and just as correct as diffing.
+// `variants` undefined means "the request body didn't touch variants at
+// all" (leave existing rows alone); an empty array means "clear them".
+async function replaceVariants(productId, variants) {
+  if (variants === undefined) return;
+  await db.prepare("DELETE FROM product_variants WHERE product_id = ?").run(productId);
+  for (const v of variants) {
+    const color = v.color?.trim() || null;
+    const size = v.size?.trim() || null;
+    const stock = Number.isFinite(Number(v.stock)) ? Math.round(Number(v.stock)) : 0;
+    await db.prepare("INSERT INTO product_variants (product_id, color, size, stock) VALUES (?, ?, ?, ?)")
+      .run(productId, color, size, stock);
+  }
+}
+
 // NOTE: now async (it looks up this product's images), so every call site
 // needs `await rowToProduct(row)` — and mapping over an array of rows
 // needs `Promise.all(rows.map(rowToProduct))` rather than a plain .map().
@@ -64,6 +87,7 @@ export async function rowToProduct(row) {
     // "top N by units sold in the last N days" logic.
     bestseller: row.tag === "Bestseller" || Boolean(row.auto_bestseller),
     images: await getImages(row.id),
+    variants: await getVariants(row.id),
   };
 }
 
@@ -112,7 +136,7 @@ router.get("/", asyncHandler(async (req, res) => {
 
 // POST /api/products
 router.post("/", requireAdmin, asyncHandler(async (req, res) => {
-  const { name, brand, category, price, oldPrice, stock, status, tag, description, weight } = req.body;
+  const { name, brand, category, price, oldPrice, stock, status, tag, description, weight, variants } = req.body;
   if (!name || !brand || !category || price == null) {
     return res.status(400).json({ error: "name, brand, category, and price are required" });
   }
@@ -121,6 +145,8 @@ router.post("/", requireAdmin, asyncHandler(async (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
     RETURNING id
   `).run(name, brand, category, price, oldPrice ?? null, stock ?? 0, status ?? "available", tag ?? null, description?.trim() || null, weight ? Number(weight) : 0.3);
+
+  await replaceVariants(result.lastInsertRowid, variants);
 
   const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(result.lastInsertRowid);
   const product = await rowToProduct(row);
@@ -155,6 +181,8 @@ router.put("/:id", requireAdmin, asyncHandler(async (req, res) => {
     merged.weight ? Number(merged.weight) : 0.3,
     req.params.id
   );
+
+  await replaceVariants(req.params.id, req.body.variants);
 
   const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
   const product = await rowToProduct(row);

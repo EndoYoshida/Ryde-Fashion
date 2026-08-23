@@ -50,6 +50,7 @@ const COLUMN_ALIASES = {
   weight: ["weight"],
   tag: ["tag", "label"],
   images: ["images", "image", "photos", "photo", "drivelinks", "driveimages"],
+  variants: ["variants", "variant", "sizecolor", "sizesstock", "sizecolorstock"],
 };
 
 function buildFieldMap(headerRow) {
@@ -80,6 +81,11 @@ function rowToRecord(row, fieldMap) {
     weight: get("weight"),
     tag: get("tag")?.toString().trim(),
     images: get("images"),
+    // Left as-is (not .trim()'d/stringified like the others) — undefined
+    // means "sheet has no variants column at all" vs. "" meaning "column
+    // exists, this row's cell is blank" — that distinction matters in
+    // syncVariantsForProduct below, so don't collapse it here.
+    variants: get("variants"),
   };
 }
 
@@ -93,6 +99,63 @@ function toFloatOrNull(v) {
   if (v === undefined || v === null || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// --- Variant cell parsing (color/size/stock) ----------------------------
+// Shorthand format, comma-separated entries, each "Color:Size:Stock":
+//   "Black:XL:5, Black:XXL:2, White:XL:3"
+// Leave Color or Size blank for a product that only varies on one axis:
+//   ":XL:5, :XXL:2"        (size-only)
+//   "Black::5, White::3"   (color-only)
+// Every entry needs exactly 3 colon-separated parts. A malformed entry is
+// skipped (not fatal) with a reason collected in `errors`, so one typo in
+// the sheet doesn't stop the rest of that product's variants — or the
+// rest of the sync run — from going through.
+function parseVariantsCell(cell) {
+  if (!cell) return { variants: [], errors: [] };
+  const variants = [];
+  const errors = [];
+  const entries = String(cell).split(",").map((e) => e.trim()).filter(Boolean);
+  for (const entry of entries) {
+    const parts = entry.split(":");
+    if (parts.length !== 3) {
+      errors.push(`"${entry}" (expected Color:Size:Stock)`);
+      continue;
+    }
+    const [colorRaw, sizeRaw, stockRaw] = parts.map((p) => p.trim());
+    const stock = toIntOrNull(stockRaw);
+    if (stock === null) {
+      errors.push(`"${entry}" (stock isn't a number)`);
+      continue;
+    }
+    variants.push({ color: colorRaw || null, size: sizeRaw || null, stock });
+  }
+  return { variants, errors };
+}
+
+// Inverse of parseVariantsCell — used when writing an admin-dashboard
+// variant edit back out to the sheet, so the two stay in the same format.
+function formatVariantsCell(variants) {
+  if (!variants || variants.length === 0) return "";
+  return variants.map((v) => `${v.color || ""}:${v.size || ""}:${v.stock}`).join(", ");
+}
+
+// Replaces every product_variants row for one product with what's in the
+// cell — simplest correct approach given variants have no stable identity
+// of their own in the sheet (no per-variant sku), so there's nothing to
+// diff against. `variantsCell === undefined` means the sheet has no
+// "variants" column mapped at all (vs. "" meaning the column exists but
+// this row's cell is empty, which correctly clears any existing variants
+// for that product).
+async function syncVariantsForProduct(productId, variantsCell) {
+  if (variantsCell === undefined) return { count: 0, errors: [] };
+  const { variants, errors } = parseVariantsCell(variantsCell);
+  await db.prepare("DELETE FROM product_variants WHERE product_id = ?").run(productId);
+  for (const v of variants) {
+    await db.prepare("INSERT INTO product_variants (product_id, color, size, stock) VALUES (?, ?, ?, ?)")
+      .run(productId, v.color, v.size, v.stock);
+  }
+  return { count: variants.length, errors };
 }
 
 async function fetchRows() {
@@ -168,7 +231,9 @@ async function upsertProduct(record) {
     productId = result.lastInsertRowid;
   }
 
-  return { skipped: false, productId, created: !existing, wasOutOfStock };
+  const { errors: variantErrors } = await syncVariantsForProduct(productId, record.variants);
+
+  return { skipped: false, productId, created: !existing, wasOutOfStock, variantErrors };
 }
 
 async function hasDriveImage(productId, driveFileId) {
@@ -297,7 +362,7 @@ export async function writeStockToSheet(sku, newStock, newStatus) {
 // "images" is deliberately excluded — that direction only ever flows
 // sheet -> DB (via syncImagesForProduct), so an admin-uploaded photo is
 // never pushed out to the sheet's Drive-link column.
-const WRITE_BACK_FIELDS = ["name", "brand", "category", "price", "oldPrice", "stock", "status", "description", "weight", "tag"];
+const WRITE_BACK_FIELDS = ["name", "brand", "category", "price", "oldPrice", "stock", "status", "description", "weight", "tag", "variants"];
 
 async function loadSheetHeaderAndRows() {
   const sheets = getSheetsClient();
@@ -341,6 +406,7 @@ export async function writeProductToSheet(product) {
       description: product.description ?? "",
       weight: product.weight,
       tag: product.tag ?? "",
+      variants: formatVariantsCell(product.variants),
     };
 
     const rowIndex = product.sku
@@ -471,6 +537,9 @@ export async function runSheetsSync() {
       seenSkus.add(record.sku);
       if (result.created) summary.created++;
       else summary.updated++;
+      if (result.variantErrors?.length) {
+        summary.errors.push(`sku="${record.sku}" had unreadable variant entries: ${result.variantErrors.join("; ")}`);
+      }
 
       const { added, failed } = await syncImagesForProduct(result.productId, record.images);
       summary.imagesAdded += added;
