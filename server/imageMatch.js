@@ -1,4 +1,4 @@
-import { db } from "../db/index.js";
+import { db } from "./db/index.js";
 
 // --- Image-based product matching (Gemini embeddings + pgvector) --------
 // Turns a customer's photo into a numeric "fingerprint" (embedding) and
@@ -152,7 +152,7 @@ export function isConfidentMatch(distance) {
 // Run this from a one-off script (e.g. `node scripts/backfillEmbeddings.js`)
 // or wire a call to it into wherever product photo uploads happen.
 export async function backfillProductEmbeddings() {
-  const { cloudinaryUrl } = await import("../upload.js");
+  const { cloudinaryUrl } = await import("./upload.js");
   const rows = await db
     .prepare(`SELECT id, filename FROM product_images WHERE embedding IS NULL ORDER BY id`)
     .all();
