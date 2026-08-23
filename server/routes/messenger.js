@@ -811,8 +811,16 @@ router.post(
           // language/register, using recent conversation as context. If
           // Gemini is down, falls back to fallbackText — which MUST be
           // safe to show verbatim (never pass raw instructions as the
-          // fallback, only real customer-facing copy).
-          const replyNaturally = async (facts, fallbackText = facts) => {
+          // fallback, only real customer-facing copy). Callers that don't
+          // pass their own fallbackText get this generic safe default —
+          // NEVER default fallbackText to `facts` itself, since `facts`
+          // is internal grounding text for Gemini (e.g. "They asked about
+          // a product... acknowledge you saw the photo...") and would leak
+          // verbatim to the customer if Gemini's call fails.
+          const replyNaturally = async (
+            facts,
+            fallbackText = `Thanks for your message! Let me check on that for you 😊`
+          ) => {
             const composed = await composeReply({
               customerText: text,
               facts,
