@@ -103,7 +103,16 @@ export const getMyRating = (productId) =>
 
 /* --------------------------------- Orders --------------------------------- */
 export const getOrders = () => request("/orders", {}, "admin");
+export const getOrder = (id) => request(`/orders/${id}`);
 export const createOrder = (order) => request("/orders", { method: "POST", body: JSON.stringify(order) });
+
+/* ---------------------------- PayMongo (online pay) ------------------------ */
+// Which payment methods are actually live right now — drives whether the
+// "Pay Online" option even shows up on Checkout, and which method labels
+// it advertises. See server/paymongo.js for how this is configured.
+export const getPaymongoConfig = () => request("/orders/paymongo/config");
+export const createPaymongoSession = (orderId) =>
+  request(`/orders/${orderId}/paymongo-session`, { method: "POST" });
 export async function uploadPaymentProof(orderId, file) {
   const formData = new FormData();
   formData.append("proof", file);

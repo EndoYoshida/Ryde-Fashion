@@ -6,11 +6,12 @@ import * as api from "../api";
 import SearchableSelect from "./ui/SearchableSelect";
 import { usePhAddressCascade } from "../hooks/usePhAddressCascade";
 
-// Set to false once a real payment gateway (PayMongo, etc.) is wired in —
-// this is the only line to flip. While true, checkout still works
-// end-to-end exactly as before (same GCash/bank details, same proof
-// upload), it just adds a visible warning so a client or tester doesn't
-// send real money before payments are actually automated.
+// Manual GCash/bank transfer still isn't automated — that's still real
+// money changing hands with no way for the site to confirm it beyond
+// eyeballing a screenshot, so this warning stays on for those. PayMongo
+// ("Pay Online" below) is the real, automated payment gateway and isn't
+// gated by this — it's controlled by the backend instead (see
+// PAYMONGO_SECRET_KEY / PAYMONGO_PAYMENT_METHODS in server/.env).
 const DEMO_MODE = true;
 
 const PAYMENT_LABELS = {
@@ -18,6 +19,18 @@ const PAYMENT_LABELS = {
   unionbank: "Bank Transfer (UnionBank)",
   gcash: "GCash",
   cod: "Cash on Delivery",
+  paymongo: "Pay Online (PayMongo)",
+};
+
+// Friendly names for whichever PayMongo methods the backend says are
+// currently live (GET /api/orders/paymongo/config) — used to build the
+// "Pay Online" option's note without hardcoding which methods are active.
+const PAYMONGO_METHOD_LABELS = {
+  qrph: "QR Ph",
+  gcash: "GCash",
+  card: "Cards",
+  paymaya: "Maya",
+  grab_pay: "GrabPay",
 };
 
 const PAYMENTS = [
@@ -74,6 +87,81 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [proofWarning, setProofWarning] = useState("");
+
+  // Which PayMongo methods (if any) are actually live right now — the
+  // "Pay Online" option only appears once this comes back enabled, so a
+  // storefront with PAYMONGO_SECRET_KEY not yet set just doesn't show it.
+  const [paymongoConfig, setPaymongoConfig] = useState(null);
+  useEffect(() => {
+    api.getPaymongoConfig().then(setPaymongoConfig).catch(() => setPaymongoConfig(null));
+  }, []);
+
+  // Handles landing back here after PayMongo's hosted checkout — either
+  // ?order=ID&payment=success or ?order=ID&payment=cancelled (see
+  // successUrl/cancelUrl in server/routes/orders.js). The redirect itself
+  // never proves payment succeeded (see server/paymongo.js) — the
+  // webhook is what actually marks the order paid — so on a "success"
+  // return this briefly polls the order a few times to give that webhook
+  // a moment to land before showing the confirmation screen.
+  const [returnStatus, setReturnStatus] = useState(null); // "checking" | "success" | "cancelled" | null
+  const [returnOrder, setReturnOrder] = useState(null);
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [retryError, setRetryError] = useState("");
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get("order");
+    const outcome = params.get("payment");
+    if (!orderId || !outcome) return;
+    window.history.replaceState(null, "", "/checkout"); // don't re-process this on refresh
+
+    let cancelled = false;
+    (async () => {
+      if (outcome === "cancelled") {
+        try {
+          setReturnOrder(await api.getOrder(orderId));
+        } catch {
+          // Order lookup failing here just means a slightly less
+          // specific message below — not fatal.
+        }
+        if (!cancelled) setReturnStatus("cancelled");
+        return;
+      }
+
+      setReturnStatus("checking");
+      // Poll briefly for the webhook to mark the order paid — most
+      // deliveries land within a second or two, but this never blocks
+      // forever: after a handful of tries it shows the confirmation
+      // regardless, since the order is safely recorded either way and
+      // the admin dashboard will reflect the true payment status once
+      // the webhook does arrive.
+      for (let attempt = 0; attempt < 6; attempt++) {
+        try {
+          const order = await api.getOrder(orderId);
+          if (!cancelled) setReturnOrder(order);
+          if (order.paymentStatus === "paid" || attempt === 5) break;
+        } catch {
+          if (attempt === 5) break;
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      if (!cancelled) setReturnStatus("success");
+    })();
+
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleRetryPaymongo = async () => {
+    if (!returnOrder) return;
+    setRetryBusy(true);
+    setRetryError("");
+    try {
+      const { checkoutUrl } = await api.createPaymongoSession(returnOrder.id);
+      window.location.href = checkoutUrl;
+    } catch (err) {
+      setRetryError(err.message || "Couldn't restart payment. Please try again.");
+      setRetryBusy(false);
+    }
+  };
 
   const [form, setForm] = useState({
     fullName: customer?.name || "",
@@ -138,8 +226,25 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
   const jntFee = freeShipping ? 0 : calculateJntShipping(totalWeightKg, address.province, address.city);
   const shipping = jntFee ?? 0;
   const total = subtotal + shipping;
-  const selectedPayment = PAYMENTS.find((p) => p.id === payment);
-  const needsProof = payment !== "cod";
+
+  // "Pay Online" only shows up once the backend confirms PayMongo is
+  // configured and has at least one live method — see the config fetch
+  // above. Built fresh each render rather than a module-level constant
+  // since it depends on that fetched config.
+  const payments = paymongoConfig?.enabled
+    ? [
+        {
+          id: "paymongo",
+          label: "Pay Online",
+          note: paymongoConfig.methods.map((m) => PAYMONGO_METHOD_LABELS[m] || m).join(" / "),
+          detail: "You'll be redirected to PayMongo's secure checkout to complete payment instantly — no proof upload needed.",
+        },
+        ...PAYMENTS,
+      ]
+    : PAYMENTS;
+
+  const selectedPayment = payments.find((p) => p.id === payment);
+  const needsProof = payment !== "cod" && payment !== "paymongo";
 
   const handleFilePicked = (e) => {
     const file = e.target.files?.[0];
@@ -184,6 +289,31 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
         items: cart.map((c) => ({ id: c.id, name: c.name, qty: c.qty, price: c.price })),
       });
 
+      if (payment === "paymongo") {
+        // Order is already persisted (stock decremented, receipt email
+        // queued) exactly like every other method — from here it's the
+        // same as any other successful placement, just with an extra
+        // redirect to actually collect payment. Clear the cart now
+        // rather than waiting for the PayMongo round-trip.
+        clearCart();
+        onOrderCreated?.(order);
+        try {
+          const { checkoutUrl } = await api.createPaymongoSession(order.id);
+          window.location.href = checkoutUrl;
+          return; // page is navigating away — nothing left to do here
+        } catch (sessionErr) {
+          // The order itself is fine and saved — only starting the
+          // redirect failed. Reuse the same "payment cancelled" screen
+          // (order id + a Try Again button that re-requests a session)
+          // rather than a bare error, since the shopper still needs a
+          // way to actually pay for an order that now exists.
+          setReturnOrder(order);
+          setReturnStatus("cancelled");
+          setRetryError(sessionErr.message || "Couldn't start online payment.");
+          return;
+        }
+      }
+
       let finalOrder = order;
       if (needsProof && proofFile) {
         try {
@@ -204,6 +334,61 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
       setBusy(false);
     }
   };
+
+  // Landed back here from PayMongo's hosted checkout — see the mount
+  // effect above. Takes priority over the normal form/placed states
+  // since the cart is already empty by this point either way.
+  if (returnStatus === "checking") {
+    return (
+      <section className="section" style={{ textAlign: "center", padding: "70px 20px" }}>
+        <h2>Confirming your payment&hellip;</h2>
+        <p className="lede" style={{ maxWidth: 420, margin: "10px auto" }}>
+          Just a moment while we confirm your payment with PayMongo.
+        </p>
+      </section>
+    );
+  }
+  if (returnStatus === "success") {
+    const paid = returnOrder?.paymentStatus === "paid";
+    return (
+      <section className="section" style={{ textAlign: "center", padding: "70px 20px" }}>
+        <Check size={40} color="#C9A15F" />
+        <h2 style={{ marginTop: 14 }}>Order confirmed</h2>
+        <p className="lede" style={{ maxWidth: 420, margin: "10px auto" }}>
+          {returnOrder
+            ? `Order #${returnOrder.id} has been placed and saved. A confirmation has been sent to your email.`
+            : "Your order has been placed and saved."}
+        </p>
+        {!paid && (
+          <p className="admin-field-hint" style={{ maxWidth: 420, margin: "0 auto 16px" }}>
+            We're still waiting on final confirmation from PayMongo — this can take a minute. You'll see it reflected on your order shortly.
+          </p>
+        )}
+        <button className="btn-gold" onClick={() => setView("home")}>Back to Home</button>
+      </section>
+    );
+  }
+  if (returnStatus === "cancelled") {
+    return (
+      <section className="section" style={{ textAlign: "center", padding: "70px 20px" }}>
+        <h2>Payment not completed</h2>
+        <p className="lede" style={{ maxWidth: 420, margin: "10px auto" }}>
+          {returnOrder
+            ? `Order #${returnOrder.id} is saved and waiting — no payment has gone through yet, so nothing was charged.`
+            : "No payment has gone through yet, so nothing was charged."}
+        </p>
+        {retryError && <p className="admin-form-error" style={{ maxWidth: 420, margin: "0 auto 16px" }}>{retryError}</p>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+          {returnOrder && (
+            <button className="btn-gold" disabled={retryBusy} onClick={handleRetryPaymongo}>
+              {retryBusy ? "Starting payment..." : "Try Payment Again"}
+            </button>
+          )}
+          <button className="btn-outline" onClick={() => setView("home")}>Back to Home</button>
+        </div>
+      </section>
+    );
+  }
 
   if (placed) {
     return (
@@ -283,7 +468,7 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
             </p>
           )}
           <div className="payment-grid">
-            {PAYMENTS.map((p) => (
+            {payments.map((p) => (
               <label key={p.id} className={`payment-option ${payment === p.id ? "active" : ""}`}>
                 <input type="radio" name="payment" checked={payment === p.id} onChange={() => { setPayment(p.id); clearProof(); }} />
                 <span className="payment-label">{p.label}</span>
@@ -291,6 +476,17 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
               </label>
             ))}
           </div>
+
+          {payment === "paymongo" && (
+            <div className="proof-upload">
+              <p className="admin-field-hint" style={{ marginBottom: 0 }}>{selectedPayment.detail}</p>
+              {paymongoConfig?.testMode && (
+                <p className="admin-field-hint" style={{ marginTop: 6 }}>
+                  PayMongo is currently in test mode — no real money will be charged.
+                </p>
+              )}
+            </div>
+          )}
 
           {needsProof && (
             <div className="proof-upload">
@@ -338,7 +534,7 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
           <div className="totals-row total"><span>Total</span><span>{peso(total)}</span></div>
           {error && <p className="admin-form-error" style={{ marginTop: 12 }}>{error}</p>}
           <button className="btn-gold full" disabled={cart.length === 0 || busy} onClick={handlePlaceOrder}>
-            {busy ? "Placing order..." : "Place Order"}
+            {busy ? (payment === "paymongo" ? "Redirecting to PayMongo..." : "Placing order...") : "Place Order"}
           </button>
         </div>
       </div>
