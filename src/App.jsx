@@ -19,6 +19,7 @@ import Checkout from "./components/Checkout";
 import AuthModal from "./components/AuthModal";
 import AccountDashboard from "./components/AccountDashboard";
 import SupportPage from "./components/SupportPage";
+import PrivacyPolicy from "./components/PrivacyPolicy";
 import AdminLayout from "./components/admin/AdminLayout";
 import AdminLogin from "./components/admin/AdminLogin";
 
@@ -47,12 +48,13 @@ export default function App() {
   // long page. Initialized from the current path so a hard refresh or a
   // shared link lands directly on the right page.
   const pathForView = (v) =>
-    ({ home: "/", shop: "/shop", support: "/support", checkout: "/checkout", account: "/account" }[v] || "/");
+    ({ home: "/", shop: "/shop", support: "/support", checkout: "/checkout", account: "/account", "privacy-policy": "/privacy-policy" }[v] || "/");
   const viewForPath = (path) => {
     if (path === "/shop") return "shop";
     if (path === "/support") return "support";
     if (path === "/checkout") return "checkout";
     if (path === "/account") return "account";
+    if (path === "/privacy-policy") return "privacy-policy";
     return "home";
   };
   const [view, setView] = useState(() => viewForPath(window.location.pathname));
@@ -518,6 +520,8 @@ export default function App() {
       )}
 
       {view === "support" && <SupportPage customer={customer} />}
+
+      {view === "privacy-policy" && <PrivacyPolicy />}
 
       {view === "checkout" && (
         <Checkout

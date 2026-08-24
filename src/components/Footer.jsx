@@ -90,6 +90,8 @@ export default function Footer({ goShop, setView, scrollToSection, customer, onA
       </div>
       <div className="footer-bottom">
         &copy; 2026 Ryde Fashion &amp; Authentic Bags and Apparel. All rights reserved.
+        {" "}&middot;{" "}
+        <button className="footer-legal-link" onClick={() => setView("privacy-policy")}>Privacy Policy</button>
       </div>
     </footer>
   );
