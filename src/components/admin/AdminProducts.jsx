@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { Plus, Pencil, Trash2, Search } from "lucide-react";
-import { peso, STATUS_LABEL, CATEGORIES, STATUS_OPTIONS } from "../../data/products";
+import { peso, STATUS_LABEL, CATEGORIES, STATUS_OPTIONS, GENDER_OPTIONS } from "../../data/products";
 import ProductFormModal from "./ProductFormModal";
 import ProductImage from "../ui/ProductImage";
 
@@ -45,6 +45,7 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [genderFilter, setGenderFilter] = useState("all");
   const [sortBy, setSortBy] = useState("name-asc");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -76,10 +77,11 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
     }
     if (categoryFilter !== "all") list = list.filter((p) => p.category === categoryFilter);
     if (statusFilter !== "all") list = list.filter((p) => p.status === statusFilter);
+    if (genderFilter !== "all") list = list.filter((p) => p.gender === genderFilter);
 
     const sort = SORT_OPTIONS.find((s) => s.id === sortBy) || SORT_OPTIONS[0];
     return [...list].sort(sort.compare);
-  }, [products, search, categoryFilter, statusFilter, sortBy]);
+  }, [products, search, categoryFilter, statusFilter, genderFilter, sortBy]);
 
   const openAdd = () => { setEditing(null); setModalOpen(true); };
   const openEdit = (p) => { setEditing(p); setModalOpen(true); };
@@ -130,6 +132,16 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
         </label>
 
         <label className="admin-filter-field">
+          <span>Gender</span>
+          <select value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)}>
+            <option value="all">All genders</option>
+            {GENDER_OPTIONS.map((g) => (
+              <option key={g} value={g}>{g}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="admin-filter-field">
           <span>Sort by</span>
           <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
             {SORT_OPTIONS.map((s) => (
@@ -138,11 +150,11 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
           </select>
         </label>
 
-        {(categoryFilter !== "all" || statusFilter !== "all" || sortBy !== "name-asc") && (
+        {(categoryFilter !== "all" || statusFilter !== "all" || genderFilter !== "all" || sortBy !== "name-asc") && (
           <button
             type="button"
             className="admin-link-btn"
-            onClick={() => { setCategoryFilter("all"); setStatusFilter("all"); setSortBy("name-asc"); }}
+            onClick={() => { setCategoryFilter("all"); setStatusFilter("all"); setGenderFilter("all"); setSortBy("name-asc"); }}
           >
             Reset filters
           </button>
@@ -162,6 +174,8 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
               <th>Product</th>
               <th>Brand</th>
               <th>Category</th>
+              <th>Color</th>
+              <th>Gender</th>
               <th>Price</th>
               <th>Stock</th>
               <th>Status</th>
@@ -184,6 +198,8 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
                   </td>
                   <td data-label="Brand">{p.brand}</td>
                   <td className="admin-capitalize" data-label="Category">{p.category}</td>
+                  <td data-label="Color">{p.color || "—"}</td>
+                  <td data-label="Gender">{p.gender || "—"}</td>
                   <td data-label="Price">{peso(p.price)}</td>
                   <td data-label="Stock">{p.stock}</td>
                   <td data-label="Status"><span className={`status-badge inline ${st.cls}`}>{st.label}</span></td>
@@ -196,7 +212,7 @@ export default function AdminProducts({ products, addProduct, updateProduct, del
               );
             })}
             {filtered.length === 0 && (
-              <tr><td colSpan={9} className="admin-empty">No products match your search.</td></tr>
+              <tr><td colSpan={11} className="admin-empty">No products match your search.</td></tr>
             )}
           </tbody>
         </table>

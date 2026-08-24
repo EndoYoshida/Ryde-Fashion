@@ -1,21 +1,34 @@
 import React, { useState, useMemo } from "react";
 import { Search, SlidersHorizontal, ChevronDown } from "lucide-react";
-import { CATEGORIES, peso } from "../data/products";
+import { CATEGORIES, GENDER_OPTIONS, peso } from "../data/products";
 import ProductCard from "./ProductCard";
 
 export default function Browse({ products, openProduct, toggleWish, wishlist, addToCart, search, setSearch, categoryFilter, setCategoryFilter, tagFilter, setTagFilter }) {
   const [sort, setSort] = useState("newest");
   const [priceMax, setPriceMax] = useState(16000);
   const [availOnly, setAvailOnly] = useState(false);
+  const [genderFilter, setGenderFilter] = useState(null);
+  const [colorFilter, setColorFilter] = useState(null);
   // Collapsed by default — expanding to show every filter section right
   // away buried the product grid below the fold on first load.
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // Colors are free text (unlike category/gender, which are fixed
+  // lists), so the filter chips are built from whatever colors actually
+  // appear on the currently loaded products, rather than a hardcoded list.
+  const colorOptions = useMemo(() => {
+    const set = new Set();
+    products.forEach((p) => { if (p.color) set.add(p.color); });
+    return [...set].sort();
+  }, [products]);
 
   const filtered = useMemo(() => {
     let list = products.filter((p) => p.price <= priceMax);
     if (categoryFilter) list = list.filter((p) => p.category === categoryFilter);
     if (tagFilter === "Bestseller") list = list.filter((p) => p.bestseller);
     else if (tagFilter) list = list.filter((p) => p.tag === tagFilter);
+    if (genderFilter) list = list.filter((p) => p.gender === genderFilter);
+    if (colorFilter) list = list.filter((p) => p.color === colorFilter);
     if (search) list = list.filter((p) => (p.name + p.brand).toLowerCase().includes(search.toLowerCase()));
     if (availOnly) list = list.filter((p) => p.status === "available");
     if (sort === "price-asc") list = [...list].sort((a, b) => a.price - b.price);
@@ -23,7 +36,7 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
     if (sort === "popularity") list = [...list].sort((a, b) => b.reviews - a.reviews);
     if (sort === "newest") list = [...list].sort((a, b) => b.id - a.id);
     return list;
-  }, [products, categoryFilter, tagFilter, search, sort, priceMax, availOnly]);
+  }, [products, categoryFilter, tagFilter, genderFilter, colorFilter, search, sort, priceMax, availOnly]);
 
   const heading = tagFilter === "New" ? "New Arrivals" : tagFilter === "Bestseller" ? "Best Sellers" : "Shop all products";
 
@@ -72,6 +85,34 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
                   </button>
                 ))}
               </div>
+              <div className="filter-group">
+                <h5>Gender</h5>
+                <button className={`filter-chip ${!genderFilter ? "active" : ""}`} onClick={() => setGenderFilter(null)}>All</button>
+                {GENDER_OPTIONS.map((g) => (
+                  <button
+                    key={g}
+                    className={`filter-chip ${genderFilter === g ? "active" : ""}`}
+                    onClick={() => setGenderFilter(g)}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+              {colorOptions.length > 0 && (
+                <div className="filter-group">
+                  <h5>Color</h5>
+                  <button className={`filter-chip ${!colorFilter ? "active" : ""}`} onClick={() => setColorFilter(null)}>All</button>
+                  {colorOptions.map((c) => (
+                    <button
+                      key={c}
+                      className={`filter-chip ${colorFilter === c ? "active" : ""}`}
+                      onClick={() => setColorFilter(c)}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="filter-group">
                 <h5>Max price: {peso(priceMax)}</h5>
                 <input type="range" min="1500" max="16000" step="500" value={priceMax} onChange={(e) => setPriceMax(Number(e.target.value))} className="range" />

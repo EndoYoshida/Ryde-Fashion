@@ -513,7 +513,21 @@ async function deleteMissingSkus(seenSkus) {
   let deleted = 0;
   for (const { id } of toDelete) {
     const images = await db.prepare("SELECT filename, drive_file_id FROM product_images WHERE product_id = ?").all(id);
-    await db.prepare("DELETE FROM products WHERE id = ?").run(id); // product_images cascades
+    try {
+      await db.prepare("DELETE FROM products WHERE id = ?").run(id); // product_images cascades
+    } catch (err) {
+      if (err.code === "23503") {
+        // Product has order history (order_items references it via a
+        // non-cascading FK) — hard-deleting would either fail like this
+        // or, worse, silently corrupt past orders. Archive it instead:
+        // hides it from the storefront (status !== "available") and
+        // zeroes stock, but keeps the row (and order history) intact.
+        // Leave its images/Drive photo alone since the product still exists.
+        await db.prepare("UPDATE products SET status = 'unavailable', stock = 0 WHERE id = ?").run(id);
+        continue;
+      }
+      throw err;
+    }
     for (const { filename, drive_file_id } of images) {
       deleteCloudinaryImage(filename);
       // Also trash the source photo in Drive, so a row removed from the
@@ -586,7 +600,12 @@ export async function runSheetsSync() {
   // wipe out every synced product — this guard prevents that.
   const deletionsEnabled = process.env.SHEETS_SYNC_DELETE_MISSING !== "false";
   if (deletionsEnabled && seenSkus.size > 0) {
-    summary.deleted = await deleteMissingSkus(seenSkus);
+    try {
+      summary.deleted = await deleteMissingSkus(seenSkus);
+    } catch (err) {
+      summary.errors.push(`Deletion pass failed: ${err.message}`);
+      console.error("[sheets-sync] deletion pass failed:", err);
+    }
   } else if (deletionsEnabled && seenSkus.size === 0) {
     summary.errors.push("Skipped deletion pass: no valid rows synced this run (safety guard).");
   }

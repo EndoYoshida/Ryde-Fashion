@@ -124,6 +124,8 @@ export default function ProductDetail({ product, onClose, addToCart, toggleWish,
             </p>
 
             <div className="spec-row"><span>Brand</span><span>{product.brand}</span></div>
+            {product.color && <div className="spec-row"><span>Color</span><span>{product.color}</span></div>}
+            {product.gender && <div className="spec-row"><span>Gender</span><span>{product.gender}</span></div>}
             <div className="spec-row"><span>Condition</span><span>Brand new</span></div>
             <div className="spec-row"><span>Stock</span><span>{product.stock > 0 ? `${product.stock} left` : "0"}</span></div>
 

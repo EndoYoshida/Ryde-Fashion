@@ -19,6 +19,11 @@ export const CATEGORY_ICON = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.i
 
 export const STATUS_OPTIONS = ["available", "sold-out", "coming-soon", "unavailable"];
 
+// Matches the fixed dropdown values your Products sheet's GENDER column
+// uses. Kept as a small fixed list (like STATUS_OPTIONS) rather than
+// free text, since that's what the sheet itself validates against.
+export const GENDER_OPTIONS = ["WOMEN", "MEN", "UNISEX"];
+
 // Real product data now lives in the database (see /server/db) and is
 // loaded through src/api.js. This file only keeps small static lookup
 // data the UI needs (categories, testimonials, formatting helpers).

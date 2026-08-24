@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { X, Upload, Loader2 } from "lucide-react";
-import { CATEGORIES, CATEGORY_ICON, STATUS_OPTIONS } from "../../data/products";
+import { CATEGORIES, CATEGORY_ICON, STATUS_OPTIONS, GENDER_OPTIONS } from "../../data/products";
 import { SERVER_ORIGIN } from "../../api";
 
 const emptyForm = {
-  name: "", brand: "", category: CATEGORIES[0].id, price: "", stock: "",
+  name: "", brand: "", category: CATEGORIES[0].id, color: "", gender: "", price: "", stock: "",
   status: "available", tag: "", description: "", weight: "0.3",
 };
 
@@ -13,6 +13,7 @@ export default function ProductFormModal({ product, onClose, onSave, uploadImage
     product
       ? {
           name: product.name, brand: product.brand, category: product.category,
+          color: product.color || "", gender: product.gender || "",
           price: product.price, stock: product.stock, status: product.status,
           tag: product.tag || "", description: product.description || "",
           weight: product.weight != null ? String(product.weight) : "0.3",
@@ -157,6 +158,17 @@ export default function ProductFormModal({ product, onClose, onSave, uploadImage
             <label>Status
               <select value={form.status} onChange={set("status")}>
                 {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="admin-form-row">
+            <label>Color (optional)
+              <input value={form.color} onChange={set("color")} placeholder="e.g. Cream" />
+            </label>
+            <label>Gender (optional)
+              <select value={form.gender} onChange={set("gender")}>
+                <option value="">Not specified</option>
+                {GENDER_OPTIONS.map((g) => <option key={g} value={g}>{g}</option>)}
               </select>
             </label>
           </div>

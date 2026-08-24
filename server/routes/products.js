@@ -209,7 +209,26 @@ router.put("/:id", requireAdmin, asyncHandler(async (req, res) => {
 router.delete("/:id", requireAdmin, asyncHandler(async (req, res) => {
   const existing = await db.prepare("SELECT sku FROM products WHERE id = ?").get(req.params.id);
   const images = await db.prepare("SELECT filename, drive_file_id FROM product_images WHERE product_id = ?").all(req.params.id);
-  const result = await db.prepare("DELETE FROM products WHERE id = ?").run(req.params.id);
+
+  let result;
+  try {
+    result = await db.prepare("DELETE FROM products WHERE id = ?").run(req.params.id);
+  } catch (err) {
+    if (err.code === "23503") {
+      // Product has order history (order_items references it via a
+      // non-cascading FK) — can't hard-delete without breaking that
+      // history. Archive it instead: hides it from the storefront and
+      // zeroes stock, but keeps the row (and past orders) intact.
+      const archived = await db.prepare("UPDATE products SET status = 'unavailable', stock = 0 WHERE id = ?")
+        .run(req.params.id);
+      if (archived.changes === 0) return res.status(404).json({ error: "Product not found" });
+      return res.status(200).json({
+        archived: true,
+        message: "This product has order history, so it was marked unavailable instead of deleted.",
+      });
+    }
+    throw err;
+  }
   if (result.changes === 0) return res.status(404).json({ error: "Product not found" });
 
   // product_images rows cascade-delete automatically; also remove the

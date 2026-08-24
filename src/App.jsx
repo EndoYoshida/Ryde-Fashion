@@ -239,7 +239,16 @@ export default function App() {
     setProducts((prev) => prev.map((p) => (p.id === id ? withIcon(updated) : p)));
   };
   const deleteProduct = async (id) => {
-    await api.deleteProductApi(id);
+    const result = await api.deleteProductApi(id);
+    if (result?.archived) {
+      // Had order history, so the backend archived it (status set to
+      // "unavailable") instead of deleting the row — keep it in local
+      // state with that status rather than removing it, so the admin
+      // list stays accurate without a full refetch.
+      setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, status: "unavailable", stock: 0 } : p)));
+      window.alert(result.message || "This product has order history, so it was marked unavailable instead of deleted.");
+      return;
+    }
     setProducts((prev) => prev.filter((p) => p.id !== id));
     setWishlist((prev) => {
       const next = new Set(prev);
