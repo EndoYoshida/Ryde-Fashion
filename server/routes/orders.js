@@ -23,6 +23,8 @@ export async function getOrderWithItems(id) {
     phone: order.phone,
     address: order.address,
     paymentMethod: order.payment_method,
+    deliveryMethod: order.delivery_method,
+    deliveryDetail: order.delivery_detail,
     messengerPsid: order.messenger_psid,
     proofImage: order.proof_image ? cloudinaryUrl(order.proof_image) : null,
     status: order.status,
@@ -82,7 +84,7 @@ export async function resolveOrderItems(items) {
 // PayMongo — callers own those side effects, since the website route
 // and the Messenger buy flow want different ones (e.g. Messenger orders
 // have no email to receipt, and go on to create a checkout session).
-export async function insertOrder({ id, customerName, email, phone, address, paymentMethod, messengerPsid, resolvedItems }) {
+export async function insertOrder({ id, customerName, email, phone, address, paymentMethod, deliveryMethod, deliveryDetail, messengerPsid, resolvedItems }) {
   const total = resolvedItems.reduce((sum, { product, qty }) => sum + product.price * qty, 0);
 
   // Everything below happens atomically — either the whole order, all
@@ -93,9 +95,9 @@ export async function insertOrder({ id, customerName, email, phone, address, pay
   const stockUpdates = []; // { sku, newStock, newStatus } — for pushing back to the sheet after commit
   const placeOrder = db.transaction(async (tx) => {
     await tx.prepare(`
-      INSERT INTO orders (id, customer_name, email, phone, address, payment_method, messenger_psid, status, payment_status, total, date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, to_char(now(), 'YYYY-MM-DD'))
-    `).run(id, customerName, email || null, phone || null, address || null, paymentMethod ?? null, messengerPsid || null, total);
+      INSERT INTO orders (id, customer_name, email, phone, address, payment_method, delivery_method, delivery_detail, messenger_psid, status, payment_status, total, date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, to_char(now(), 'YYYY-MM-DD'))
+    `).run(id, customerName, email || null, phone || null, address || null, paymentMethod ?? null, deliveryMethod || null, deliveryDetail || null, messengerPsid || null, total);
 
     const insertItem = tx.prepare("INSERT INTO order_items (order_id, product_id, name, qty, price) VALUES (?, ?, ?, ?, ?)");
     const updateStock = tx.prepare("UPDATE products SET stock = ?, status = ? WHERE id = ?");
@@ -154,7 +156,7 @@ router.get("/", requireAdmin, asyncHandler(async (req, res) => {
 // (fake low prices, absurd quantities, buying something sold out)
 // simply can't succeed, regardless of what the request body claims.
 router.post("/", publicWriteLimiter, asyncHandler(async (req, res) => {
-  const { id, customer, email, phone, address, paymentMethod, items } = req.body;
+  const { id, customer, email, phone, address, paymentMethod, deliveryMethod, deliveryDetail, items } = req.body;
 
   if (!id || typeof id !== "string" || id.length > 64) {
     return res.status(400).json({ error: "Invalid order id" });
@@ -202,6 +204,8 @@ router.post("/", publicWriteLimiter, asyncHandler(async (req, res) => {
     phone: cleanPhone,
     address: address?.trim() || null,
     paymentMethod,
+    deliveryMethod: deliveryMethod?.trim() || null,
+    deliveryDetail: deliveryDetail?.trim() || null,
     resolvedItems,
   });
 

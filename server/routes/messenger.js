@@ -360,8 +360,38 @@ function setLastOrder(senderId, order) {
 // that sender are treated as answers to those two questions instead of
 // being run through the usual intent classifier — see the check near the
 // top of processMessagingEvent().
-const buyFlows = new Map(); // senderId -> { step: "name"|"phone", product, qty, name? }
+const buyFlows = new Map(); // senderId -> { step, product, qty, name?, phone?, paymentMethod?, deliveryMethod?, deliveryDetail? }
 const CANCEL_WORDS = new Set(["cancel", "cancel na lang", "never mind", "nevermind", "huwag na lang", "wag na lang", "ayaw ko na"]);
+
+// Mode of Payment options — quick-reply title is what the customer taps
+// AND what comes back as the message text, so it doubles as the match
+// key (see handleBuyAnswer). Keep titles short — Messenger quick
+// replies truncate around 20 chars.
+const PAYMENT_OPTIONS = [
+  { title: "Pay Online (GCash/Card/QR)", value: "online" },
+  { title: "Cash on Delivery (COD)", value: "cod" },
+];
+
+// Mode of Delivery options. `needsAddress` gates the address step;
+// pickup options additionally set a fixed deliveryDetail (which
+// partner store) instead of asking anything further; meetup skips
+// straight to connecting the customer with the store owner.
+const DELIVERY_OPTIONS = [
+  { title: "J&T", value: "J&T", needsAddress: true },
+  { title: "Lalamove", value: "Lalamove", needsAddress: true },
+  { title: "JRS Express", value: "JRS Express", needsAddress: true },
+  { title: "LBC", value: "LBC", needsAddress: true },
+  { title: "AP Cargo", value: "AP Cargo", needsAddress: true },
+  { title: "Pickup - Valenzuela", value: "Pickup", needsAddress: false, detail: "Valenzuela partner store" },
+  { title: "Pickup - Angeles", value: "Pickup", needsAddress: false, detail: "Angeles partner store" },
+  { title: "Pickup - Olongapo (LPO Store)", value: "Pickup", needsAddress: false, detail: "LPO Store, Olongapo" },
+  { title: "Meetup", value: "Meetup", needsAddress: false, isMeetup: true },
+];
+
+function findOption(options, text) {
+  const clean = text.trim().toLowerCase();
+  return options.find((o) => o.title.toLowerCase() === clean) || options.find((o) => clean.includes(o.title.toLowerCase()));
+}
 
 function startBuyFlow(senderId, product, qty) {
   buyFlows.set(senderId, { step: "name", product, qty });
@@ -425,16 +455,75 @@ async function handleBuyAnswer(senderId, text) {
     return;
   }
 
-  // flow.step === "phone"
-  const digitCount = (text.match(/\d/g) || []).length;
-  if (digitCount < 7 || text.length > 20) {
-    const msg = `That doesn't look like a valid contact number po — could you send it again? (e.g. 09171234567)`;
+  if (flow.step === "phone") {
+    const digitCount = (text.match(/\d/g) || []).length;
+    if (digitCount < 7 || text.length > 20) {
+      const msg = `That doesn't look like a valid contact number po — could you send it again? (e.g. 09171234567)`;
+      await sendMessage(senderId, msg);
+      pushHistory(senderId, "bot", msg);
+      return;
+    }
+    flow.phone = text;
+    flow.step = "payment";
+    await sendQuickReplies(senderId, `Got it! How would you like to pay po?`, PAYMENT_OPTIONS);
+    pushHistory(senderId, "bot", `[asked mode of payment]`);
+    return;
+  }
+
+  if (flow.step === "payment") {
+    const option = findOption(PAYMENT_OPTIONS, text);
+    if (!option) {
+      await sendQuickReplies(senderId, `Please pick one of the options below po:`, PAYMENT_OPTIONS);
+      pushHistory(senderId, "bot", `[re-asked mode of payment]`);
+      return;
+    }
+    flow.paymentMethod = option.value;
+    flow.step = "delivery";
+    await sendQuickReplies(senderId, `And how would you like to receive your order po?`, DELIVERY_OPTIONS);
+    pushHistory(senderId, "bot", `[asked mode of delivery]`);
+    return;
+  }
+
+  if (flow.step === "delivery") {
+    const option = findOption(DELIVERY_OPTIONS, text);
+    if (!option) {
+      await sendQuickReplies(senderId, `Please pick one of the options below po:`, DELIVERY_OPTIONS);
+      pushHistory(senderId, "bot", `[re-asked mode of delivery]`);
+      return;
+    }
+    flow.deliveryMethod = option.value;
+    flow.deliveryDetail = option.detail || null;
+    flow.isMeetup = Boolean(option.isMeetup);
+
+    if (!option.needsAddress) {
+      return finalizeBuyFlow(senderId, text);
+    }
+    flow.step = "address";
+    const msg = `Almost done! What's the complete shipping address po (house/unit no., street, barangay, city, province)?`;
     await sendMessage(senderId, msg);
     pushHistory(senderId, "bot", msg);
     return;
   }
-  const phone = text;
-  const { product, qty, name } = flow;
+
+  // flow.step === "address"
+  if (text.length < 10 || text.length > 500) {
+    const msg = `That doesn't look like a complete address po — could you send it again with street, barangay, and city?`;
+    await sendMessage(senderId, msg);
+    pushHistory(senderId, "bot", msg);
+    return;
+  }
+  flow.address = text;
+  return finalizeBuyFlow(senderId, text);
+}
+
+// Re-validates stock, creates the order, and sends the appropriate
+// wrap-up message (PayMongo link / COD confirmation / meetup handoff).
+// `lastCustomerText` is only used for the notifyOwner() preview if
+// something needs a human.
+async function finalizeBuyFlow(senderId, lastCustomerText) {
+  const flow = buyFlows.get(senderId);
+  if (!flow) return;
+  const { product, qty, name, phone, paymentMethod, deliveryMethod, deliveryDetail, address, isMeetup } = flow;
 
   // Re-validate against the DB right before creating the order — stock
   // could have moved since the flow started (someone else bought the
@@ -465,8 +554,10 @@ async function handleBuyAnswer(senderId, text) {
     customerName: name,
     email: null,
     phone,
-    address: null,
-    paymentMethod: "online",
+    address: address || null,
+    paymentMethod,
+    deliveryMethod,
+    deliveryDetail,
     messengerPsid: senderId,
     resolvedItems,
   });
@@ -476,11 +567,43 @@ async function handleBuyAnswer(senderId, text) {
   clearBuyFlow(senderId);
   setLastOrder(senderId, order);
 
+  const deliveryLine = deliveryDetail ? `${deliveryMethod} (${deliveryDetail})` : deliveryMethod;
+
+  // Meetup: loop the owner in immediately regardless of payment method —
+  // location/time needs a human either way. The PO/order is still
+  // created and tracked normally; this just hands the *conversation*
+  // over so the owner can coordinate directly.
+  if (isMeetup) {
+    const msg =
+      `Order #${order.id} confirmed — ${qty}x ${product.brand} ${product.name}, total ${formatPesos(order.total)}. 🎉\n\n` +
+      `For meetups, ${OWNER_NAME} will personally coordinate the place and time with you here in a bit!`;
+    await sendMessage(senderId, msg);
+    pushHistory(senderId, "bot", msg);
+    startHandoff(senderId);
+    await notifyOwner(senderId, lastCustomerText, `New meetup order #${order.id} (${qty}x ${product.brand} ${product.name}, ${formatPesos(order.total)}, ${paymentMethod === "cod" ? "pay on meetup" : "pay online"}) — needs meetup location/time coordinated.`);
+    return;
+  }
+
+  // COD: no PayMongo session — order's saved and confirmed as-is, PO
+  // goes out right away since there's no payment step to wait on.
+  if (paymentMethod === "cod") {
+    const msg =
+      `Order #${order.id} confirmed — ${qty}x ${product.brand} ${product.name}, total ${formatPesos(order.total)}. 🎉\n\n` +
+      `Delivery: ${deliveryLine}\n` +
+      `Payment: Cash on Delivery\n\n` +
+      `We'll prepare your order and update you here. Thank you for shopping with ${STORE_NAME}! 💗`;
+    await sendMessage(senderId, msg);
+    pushHistory(senderId, "bot", msg);
+    return;
+  }
+
+  // paymentMethod === "online" — same PayMongo Checkout Session flow as
+  // before, just now carrying the delivery info along with it.
   if (!isPaymongoConfigured) {
     const msg = `Your order #${order.id} for ${qty}x ${product.brand} ${product.name} (total ${formatPesos(order.total)}) is saved! Online payment isn't set up yet on our end though — ${OWNER_NAME} will follow up with you shortly on how to pay. 🙏`;
     await sendMessage(senderId, msg);
     pushHistory(senderId, "bot", msg);
-    await notifyOwner(senderId, text, `New Messenger order #${order.id} needs a manual payment link — PayMongo isn't configured.`);
+    await notifyOwner(senderId, lastCustomerText, `New Messenger order #${order.id} needs a manual payment link — PayMongo isn't configured.`);
     return;
   }
 
@@ -497,7 +620,7 @@ async function handleBuyAnswer(senderId, text) {
     const msg = `Your order #${order.id} is saved (total ${formatPesos(order.total)}), but I couldn't generate a payment link right now — ${OWNER_NAME} will send you one shortly. 🙏`;
     await sendMessage(senderId, msg);
     pushHistory(senderId, "bot", msg);
-    await notifyOwner(senderId, text, `New Messenger order #${order.id} — PayMongo session creation failed, needs a manual payment link.`);
+    await notifyOwner(senderId, lastCustomerText, `New Messenger order #${order.id} — PayMongo session creation failed, needs a manual payment link.`);
     return;
   }
 
@@ -505,8 +628,9 @@ async function handleBuyAnswer(senderId, text) {
 
   const msg =
     `Order #${order.id} confirmed — ${qty}x ${product.brand} ${product.name}, total ${formatPesos(order.total)}. 🎉\n\n` +
+    `Delivery: ${deliveryLine}\n\n` +
     `Tap this link to pay securely (GCash/QR/Card): ${session.attributes.checkout_url}\n\n` +
-    `I'll send your confirmation right here as soon as payment goes through!`;
+    `I'll send your confirmation and PO right here as soon as payment goes through!`;
   await sendMessage(senderId, msg);
   pushHistory(senderId, "bot", msg);
 }
@@ -518,14 +642,31 @@ async function handleBuyAnswer(senderId, text) {
 // content in email.js, just formatted for a Messenger bubble.
 export async function sendOrderConfirmationMessenger(order) {
   const lines = order.items.map((it) => `• ${it.name} x${it.qty} — ${formatPesos(it.price * it.qty)}`).join("\n");
+  const deliveryLine = order.deliveryMethod
+    ? `Delivery: ${order.deliveryDetail ? `${order.deliveryMethod} (${order.deliveryDetail})` : order.deliveryMethod}\n\n`
+    : "";
   const text =
     `✅ Payment received — thank you, ${order.customer}!\n\n` +
     `Order #${order.id}\n\n` +
     `${lines}\n\n` +
     `Total: ${formatPesos(order.total)}\n\n` +
+    deliveryLine +
     `We'll prepare your order for shipping/pickup and update you here. Message us anytime if you have questions — and thank you for shopping with ${STORE_NAME}! 💗`;
   await sendMessage(order.messengerPsid, text);
   pushHistory(order.messengerPsid, "bot", text);
+}
+
+// Called by reconcile/paymongoReconcile.js when a Messenger order's
+// PayMongo checkout session expired without ever being paid — lets the
+// customer know their link died and offers a fresh one, rather than
+// leaving them wondering why nothing happened after they backed out.
+export async function notifyPaymentExpiredMessenger(order) {
+  if (!order.messengerPsid) return;
+  const msg =
+    `Hi! Your payment link for order #${order.id} (${formatPesos(order.total)}) has expired since it wasn't completed in time. ` +
+    `No worries — just reply here and I'll generate a new one for you. 🙏`;
+  await sendMessage(order.messengerPsid, msg);
+  pushHistory(order.messengerPsid, "bot", msg);
 }
 
 // --- Human handoff: actually pings the owner ---------------------------
@@ -1469,6 +1610,33 @@ async function sendMessage(recipientId, text) {
   });
   if (!res.ok) {
     console.error("Messenger send failed:", await res.text());
+  }
+}
+
+// Sends tappable quick-reply buttons — used for Mode of Payment / Mode
+// of Delivery so customers pick instead of free-typing (error-prone on
+// mobile, and needs exact-ish matching downstream). Messenger returns
+// the tapped button's title back as a normal text message, which is
+// what handleBuyAnswer()'s findOption() matches against — no change to
+// the webhook's message parsing needed.
+async function sendQuickReplies(recipientId, text, options) {
+  if (!PAGE_TOKEN) {
+    console.warn("FB_PAGE_TOKEN not set — skipping Messenger send.");
+    return;
+  }
+  const res = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_TOKEN}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      recipient: { id: recipientId },
+      message: {
+        text,
+        quick_replies: options.map((o) => ({ content_type: "text", title: o.title, payload: o.value })),
+      },
+    }),
+  });
+  if (!res.ok) {
+    console.error("Messenger quick-reply send failed:", await res.text());
   }
 }
 

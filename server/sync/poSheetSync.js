@@ -24,8 +24,8 @@ const PO_ITEMS_RANGE = process.env.SHEETS_SYNC_PO_ITEMS_RANGE || "PO Items";
 // collected at checkout).
 const REGISTER_HEADERS = [
   "PO Number", "Order Date", "Order Status", "Payment Status",
-  "Mode of Payment", "Customer Name", "Contact Number", "Email Address",
-  "Complete Address", "Total",
+  "Mode of Payment", "Mode of Delivery", "Customer Name", "Contact Number",
+  "Email Address", "Complete Address", "Total",
 ];
 
 const ITEMS_HEADERS = [
@@ -45,6 +45,7 @@ function registerRowValues(order) {
     order.status,
     order.paymentStatus,
     order.paymentMethod || "",
+    [order.deliveryMethod, order.deliveryDetail].filter(Boolean).join(" - "),
     order.customer,
     // Written with valueInputOption: "USER_ENTERED" below, which makes Sheets
     // parse this exactly like manual keyboard entry. A phone number like

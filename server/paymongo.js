@@ -123,6 +123,27 @@ export async function createCheckoutSession({ order, successUrl, cancelUrl }) {
   return json.data;
 }
 
+// Retrieves the current state of a Checkout Session directly from
+// PayMongo. Needed because Checkout Sessions only ever webhook
+// `checkout_session.payment.paid` — there is no cancelled/failed event
+// for one that a customer abandoned — so reconcile/paymongoReconcile.js
+// polls this instead. `status` is "active" (still payable) or
+// "expired" (definitively dead).
+export async function getCheckoutSession(sessionId) {
+  if (!isPaymongoConfigured) {
+    throw new Error("PayMongo is not configured — set PAYMONGO_SECRET_KEY in server/.env");
+  }
+  const res = await fetch(`${PAYMONGO_API}/checkout_sessions/${sessionId}`, {
+    headers: { Authorization: authHeader() },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message = json?.errors?.[0]?.detail || `PayMongo error (${res.status})`;
+    throw new Error(message);
+  }
+  return json.data;
+}
+
 // Verifies the `Paymongo-Signature` header PayMongo sends on every
 // webhook request. Header format: "t=<unix_ts>,te=<test_sig>,li=<live_sig>"
 // — te/li are HMAC-SHA256 hex digests of "<t>.<raw_body>" computed with

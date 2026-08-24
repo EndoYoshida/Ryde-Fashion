@@ -96,6 +96,13 @@ CREATE TABLE IF NOT EXISTS orders (
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS paymongo_checkout_session_id TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS paymongo_payment_id TEXT;
 
+-- Mode of Delivery, e.g. "J&T", "Lalamove", "Pickup - Olongapo (LPO Store)",
+-- "Meetup". delivery_detail holds anything extra that needs to travel with
+-- it (which partner store, a meetup note) — kept separate from `address`
+-- since pickup/meetup orders never collect a shipping address at all.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_method TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_detail TEXT;
+
 CREATE TABLE IF NOT EXISTS order_items (
   id SERIAL PRIMARY KEY,
   order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,

@@ -1,5 +1,25 @@
 import cron from "node-cron";
 import { runReconciliation } from "../scripts/reconcile-firebase-customers.js";
+import { reconcilePendingPaymongoOrders } from "./paymongoReconcile.js";
+
+// Catches orders whose PayMongo Checkout Session was cancelled/abandoned —
+// PayMongo never webhooks that, so this has to go ask. 30 min is plenty
+// often given sessions default to a 24h expiry; see paymongoReconcile.js.
+const PAYMONGO_SCHEDULE = "*/30 * * * *";
+
+export function startPaymongoReconcileScheduler() {
+  cron.schedule(PAYMONGO_SCHEDULE, async () => {
+    try {
+      const r = await reconcilePendingPaymongoOrders();
+      if (r.expired) {
+        console.log(`[paymongo-reconcile] ${r.expired}/${r.checked} pending order(s) marked payment_status='failed'.`);
+      }
+    } catch (err) {
+      console.error("[paymongo-reconcile] scheduled run failed:", err.message);
+    }
+  });
+  console.log(`PayMongo pending-order reconciliation scheduled (cron "${PAYMONGO_SCHEDULE}").`);
+}
 
 // Runs the Firebase/customers reconciliation on a schedule, in-process.
 // Uses the shared runReconciliation() (see scripts/reconcile-firebase-customers.js)
