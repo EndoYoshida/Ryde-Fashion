@@ -304,6 +304,28 @@ function isPendingClarification(senderId) {
 // category" line. Cleared at the same points pendingClarification is.
 const photoAwaitingName = new Map(); // senderId -> boolean
 
+// Same idea, but for "we just asked for their order number." Needed so
+// that if the customer answers with a PHOTO (their PayMongo receipt
+// screenshot, most commonly — see image handling below) instead of
+// typing the number, we know to try reading it off the screenshot
+// rather than running it through the generic product-photo matcher and
+// asking "what's the item name/brand?", which is what a screenshot of a
+// receipt would previously get met with. Cleared wherever the other two
+// flags above are.
+const awaitingOrderNumber = new Map(); // senderId -> boolean
+
+function setAwaitingOrderNumber(senderId) {
+  awaitingOrderNumber.set(senderId, true);
+}
+
+function clearAwaitingOrderNumber(senderId) {
+  awaitingOrderNumber.delete(senderId);
+}
+
+function isAwaitingOrderNumber(senderId) {
+  return awaitingOrderNumber.get(senderId) === true;
+}
+
 // --- Short conversation memory ---------------------------------------
 // A few recent turns per customer, so replies feel like an ongoing chat
 // instead of restarting cold every message (e.g. not re-greeting them,
@@ -1064,7 +1086,8 @@ async function searchProducts({ words = [], color, size } = {}) {
       `SELECT DISTINCT p.id, p.name, p.brand, p.price, p.stock, p.status
        FROM products p ${variantJoin}
        WHERE ${where}
-       ORDER BY p.name LIMIT 3`
+       ORDER BY (p.status = 'available' AND p.stock > 0) DESC, p.name
+       LIMIT 3`
     )
     .all(...params);
   return rows;
@@ -1132,7 +1155,64 @@ function formatReplyLine(p) {
   return `${p.brand} - ${p.name}\n₱${p.price.toLocaleString()} · ${stockLine}`;
 }
 
-// NOTE: order.status is echoed as-is from the DB rather than mapped to a
+// --- OCR-ish order-number extraction from a photo ----------------------
+// Used only when we're expecting an order-number reply (see
+// awaitingOrderNumber above) and the customer sends a PHOTO instead of
+// typing it — almost always their PayMongo receipt/checkout confirmation
+// screenshot, which has the order number printed right on it (e.g.
+// "Ryde Fashion order #MSG-MT7UA037853"). Sends the image to Gemini and
+// asks it to read off anything shaped like one of our order ids (always
+// "MSG-" + uppercase alphanumerics — see makeMessengerOrderId above).
+// Returns the order id string, or null if nothing that shape was found,
+// the fetch failed, or Gemini isn't configured.
+async function extractOrderIdFromImage(imageUrl) {
+  if (!GEMINI_API_KEY) return null;
+  try {
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) return null;
+    const buf = Buffer.from(await imgRes.arrayBuffer());
+    const mimeType = imgRes.headers.get("content-type") || "image/jpeg";
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { inline_data: { mime_type: mimeType, data: buf.toString("base64") } },
+                {
+                  text:
+                    `If this image contains an order number in the format "MSG-" followed by ` +
+                    `letters/digits (e.g. MSG-MT7UA037853), reply with ONLY that order number and ` +
+                    `nothing else. If there's no such order number visible anywhere in the image, ` +
+                    `reply with exactly "NONE".`,
+                },
+              ],
+            },
+          ],
+        }),
+      }
+    );
+    if (!res.ok) {
+      console.error("[messenger] order-number image extraction call failed:", await res.text());
+      return null;
+    }
+    const data = await res.json();
+    const answer = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!answer || answer.toUpperCase() === "NONE") return null;
+    const match = answer.match(/MSG-[A-Z0-9]+/i);
+    return match ? match[0].toUpperCase() : null;
+  } catch (err) {
+    console.error("[messenger] order-number image extraction failed:", err.message);
+    return null;
+  }
+}
+
+
 // friendlier label, since the actual set of status values you use
 // (e.g. "pending" / "packed" / "shipped" / "delivered" / "cancelled")
 // wasn't confirmed — double check this reads naturally against your real
@@ -1302,6 +1382,35 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
 
         if (hasImage) {
           const imageUrl = (event.message?.attachments || []).find((a) => a.type === "image")?.payload?.url;
+
+          // If we just asked for their order number and they sent a photo
+          // instead of typing it, that's almost always their receipt
+          // screenshot — try reading the order number off it before
+          // falling into product-photo matching, which used to be the
+          // only thing this branch did (hence "Got your photo! Could you
+          // tell me the item name or brand..." in response to a payment
+          // receipt).
+          if (isAwaitingOrderNumber(senderId) && imageUrl) {
+            const orderId = await extractOrderIdFromImage(imageUrl);
+            if (orderId) {
+              const order = (await db.prepare(`SELECT id, status, payment_status, total, date FROM orders WHERE id = $1`).all(orderId))[0];
+              if (order) {
+                clearAwaitingOrderNumber(senderId);
+                clearPendingClarification(senderId);
+                resetFailure(senderId);
+                setLastOrder(senderId, order);
+                const items = await db.prepare(`SELECT name, qty FROM order_items WHERE order_id = $1 ORDER BY id`).all(orderId);
+                await sendMessage(senderId, formatOrderStatusReply(order, items));
+                pushHistory(senderId, "bot", `[sent order status for ${orderId}, read from their screenshot]`);
+                return;
+              }
+            }
+            const msg = `Hmm, I couldn't quite make out an order number from that photo po — could you type or paste it instead? It starts with "MSG-" and should be on your order confirmation. 📄`;
+            await sendMessage(senderId, msg);
+            pushHistory(senderId, "bot", msg);
+            return;
+          }
+
           const match = imageUrl
             ? await findMatchingProduct(imageUrl).catch((err) => {
                 console.error("[messenger] image match failed:", err.message);
@@ -1493,9 +1602,13 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
             if (item.intent === "order_status") {
               const orderId = item.order_id?.trim();
               if (!orderId) {
+                anyFailed = true;
+                setPendingClarification(senderId);
+                setAwaitingOrderNumber(senderId);
                 factsParts.push(`They're asking about an order but didn't give an order number — ask for it.`);
                 continue;
               }
+              clearAwaitingOrderNumber(senderId);
               const order = (await db.prepare(`SELECT id, status, payment_status, total, date FROM orders WHERE id = $1`).all(orderId))[0];
               if (!order) {
                 anyFailed = true;
@@ -1547,10 +1660,24 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
                 continue;
               }
 
+              // Same fix as the product_search branch above: don't ask
+              // "which one do you mean?" between an available item and a
+              // sold-out one that happened to also match — narrow to
+              // available items first. Only actually ambiguous (2+
+              // in-stock matches) after that gets the disambiguation ask.
               if (products.length > 1) {
-                anyFailed = true;
-                factsParts.push(`They want to buy something but ${products.length} products matched: ${products.map((p) => `${p.brand} ${p.name}`).join(", ")} — ask which exact one they mean before proceeding.`);
-                continue;
+                const available = products.filter((p) => p.status === "available" && p.stock > 0);
+                if (available.length === 1) {
+                  products = available;
+                } else if (available.length > 1) {
+                  anyFailed = true;
+                  factsParts.push(`They want to buy something but ${available.length} products matched: ${available.map((p) => `${p.brand} ${p.name}`).join(", ")} — ask which exact one they mean before proceeding.`);
+                  continue;
+                } else {
+                  anyFailed = true;
+                  factsParts.push(`They want to buy "${(item.search_terms || []).join(" ") || text}", but every matching product (${products.map((p) => `${p.brand} ${p.name}`).join(", ")}) is currently out of stock — let them know, don't start an order.`);
+                  continue;
+                }
               }
 
               const product = products[0];
@@ -1570,10 +1697,28 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
               anyResolved = true;
               setFocusProduct(senderId, product);
               startBuyFlow(senderId, product, requestedQty);
+              // The actual "send your name" ask is sent as a fixed,
+              // deterministic afterReply step below — NOT left to Gemini's
+              // wording. This used to be a fact telling Gemini to "ask
+              // ONLY for their name," but it wasn't reliably honoring
+              // that: it would sometimes compose a message asking for
+              // name + address + contact all at once. Whatever the
+              // customer sent back to that got silently discarded anyway,
+              // since handleBuyAnswer()'s step machine below only ever
+              // consumes ONE field at a time (name, then phone, then
+              // payment, then delivery, then address) and re-asks for
+              // name regardless — so that upfront multi-field ask never
+              // did anything but confuse the customer into re-typing
+              // details a second time.
               factsParts.push(
                 `Great, they want to buy ${requestedQty}x ${product.brand} ${product.name} (${formatPesos(product.price)} each, total ${formatPesos(product.price * requestedQty)}). ` +
-                `Confirm this warmly and ask for their full name so the order can be prepared — ask ONLY for their name in this reply, nothing else yet.`
+                `Confirm this warmly in one short line only — do NOT ask for their name, address, contact number, or any other detail yourself; that's handled separately right after your reply.`
               );
+              afterReply.push(async () => {
+                const msg = `Can you please send your full name po so we can prepare your order? 😊`;
+                await sendMessage(senderId, msg);
+                pushHistory(senderId, "bot", msg);
+              });
               continue;
             }
 
@@ -1602,9 +1747,28 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
                 products = await searchProducts({ words, color: item.color, size: item.size });
               }
 
+              // When multiple items matched — a category/brand browse like
+              // "ano pa po available" or "what watches do you have" — don't
+              // surface sold-out ones as if they were live options; that's
+              // what was happening here (an out-of-stock Technomarine got
+              // listed right alongside an in-stock Invicta). A single named
+              // product still shows even when it's out of stock, though —
+              // "that one's sold out" is a real, useful answer when the
+              // customer asked about it specifically, not noise in a list.
+              let allSoldOut = false;
+              if (products.length > 1) {
+                const available = products.filter((p) => p.status === "available");
+                allSoldOut = products.length > 0 && available.length === 0;
+                if (!allSoldOut) products = available;
+              }
+
               if (products.length === 0) {
                 anyFailed = true;
-                factsParts.push(`No product matched "${(item.search_terms || []).join(" ") || text}" — ask them to share the exact product name or brand.`);
+                factsParts.push(
+                  allSoldOut
+                    ? `Everything matching "${(item.search_terms || []).join(" ") || text}" is currently sold out — let them know and offer to check something similar.`
+                    : `No product matched "${(item.search_terms || []).join(" ") || text}" — ask them to share the exact product name or brand.`
+                );
                 continue;
               }
 
@@ -1668,6 +1832,7 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
             resetFailure(senderId);
             clearPendingClarification(senderId);
             photoAwaitingName.delete(senderId);
+            clearAwaitingOrderNumber(senderId);
           }
         } catch (err) {
           console.error("Messenger auto-reply failed:", err);
