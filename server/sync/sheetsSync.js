@@ -106,6 +106,17 @@ function toFloatOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Catches the "pasted the Drive link into the wrong cell" mistake — a
+// description whose entire content is a single bare URL is almost never
+// intentional customer-facing copy, and it's a real thing that's happened
+// (the Drive share link ends up literally on the storefront product
+// page). Only matches when the URL is the *whole* trimmed string, so a
+// legitimate description that happens to mention/include a link
+// mid-sentence is left alone.
+function looksLikeBareUrl(text) {
+  return /^https?:\/\/\S+$/i.test(String(text || "").trim());
+}
+
 // --- Variant cell parsing (color/size/stock) ----------------------------
 // Shorthand format, comma-separated entries, each "Color:Size:Stock":
 //   "Black:XL:5, Black:XXL:2, White:XL:3"
@@ -200,6 +211,11 @@ async function upsertProduct(record) {
   const existing = await db.prepare("SELECT * FROM products WHERE sku = ?").get(record.sku);
   const wasOutOfStock = existing ? (existing.status !== "available" || existing.stock <= 0) : false;
 
+  // See looksLikeBareUrl above — don't let a misplaced Drive/image link
+  // go out as the product's description; drop it and surface a warning
+  // in the sync summary instead, so the sheet gets fixed at the source.
+  const descriptionIsBareUrl = looksLikeBareUrl(record.description);
+
   const values = {
     name: record.name,
     brand: record.brand,
@@ -211,7 +227,7 @@ async function upsertProduct(record) {
     stock: toIntOrNull(record.stock) ?? 0,
     status: record.status || "available",
     tag: record.tag || null,
-    description: record.description || null,
+    description: descriptionIsBareUrl ? null : (record.description || null),
     weight: toFloatOrNull(record.weight) ?? 0.3,
   };
 
@@ -240,7 +256,16 @@ async function upsertProduct(record) {
 
   const { errors: variantErrors } = await syncVariantsForProduct(productId, record.variants);
 
-  return { skipped: false, productId, created: !existing, wasOutOfStock, variantErrors };
+  return {
+    skipped: false,
+    productId,
+    created: !existing,
+    wasOutOfStock,
+    variantErrors,
+    descriptionWarning: descriptionIsBareUrl
+      ? `description looked like a bare link ("${record.description.trim()}") — cleared instead of publishing it as copy`
+      : null,
+  };
 }
 
 async function hasDriveImage(productId, driveFileId) {
@@ -567,6 +592,9 @@ export async function runSheetsSync() {
       else summary.updated++;
       if (result.variantErrors?.length) {
         summary.errors.push(`sku="${record.sku}" had unreadable variant entries: ${result.variantErrors.join("; ")}`);
+      }
+      if (result.descriptionWarning) {
+        summary.errors.push(`sku="${record.sku}": ${result.descriptionWarning}`);
       }
 
       const { added, failed } = await syncImagesForProduct(result.productId, record.images);
