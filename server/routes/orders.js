@@ -23,6 +23,7 @@ export async function getOrderWithItems(id) {
     phone: order.phone,
     address: order.address,
     paymentMethod: order.payment_method,
+    messengerPsid: order.messenger_psid,
     proofImage: order.proof_image ? cloudinaryUrl(order.proof_image) : null,
     status: order.status,
     paymentStatus: order.payment_status,
@@ -30,6 +31,113 @@ export async function getOrderWithItems(id) {
     date: order.date,
     items,
   };
+}
+
+// Thrown by resolveOrderItems for anything that should surface as a
+// customer-facing message (bad qty, sold out, no longer available) —
+// callers (this route, and the Messenger "buy now" flow) catch this
+// specifically so a raw stack trace never leaks to a customer.
+export class OrderError extends Error {
+  constructor(message, status = 409) {
+    super(message);
+    this.status = status; // HTTP status the website route should reply with
+  }
+}
+
+// Re-derives and validates a cart against the database — the ONLY
+// things ever trusted from the caller are product id and qty; name,
+// price, and availability always come from the product row itself.
+// Shared by the website checkout route below and the Messenger "buy
+// now" flow (routes/messenger.js), so both go through identical
+// pricing/stock rules and can never drift apart.
+export async function resolveOrderItems(items) {
+  if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
+    throw new OrderError("Order must include 1-50 items", 400);
+  }
+  const getProduct = db.prepare("SELECT * FROM products WHERE id = ?");
+  const resolvedItems = [];
+  for (const raw of items) {
+    const qty = Number(raw?.qty);
+    if (!Number.isInteger(qty) || qty < 1 || qty > 999) {
+      throw new OrderError("Each item needs a valid quantity (1-999)", 400);
+    }
+    const product = raw?.id ? await getProduct.get(raw.id) : null;
+    if (!product) {
+      throw new OrderError("One of the items in your cart no longer exists. Please refresh and try again.", 400);
+    }
+    if (product.status !== "available") {
+      throw new OrderError(`"${product.name}" is no longer available.`, 409);
+    }
+    if (product.stock < qty) {
+      throw new OrderError(`Only ${product.stock} of "${product.name}" left in stock.`, 409);
+    }
+    resolvedItems.push({ product, qty });
+  }
+  return resolvedItems;
+}
+
+// Writes the order + line items + stock decrements atomically (see the
+// transaction note below), and returns the stock-write-back list for
+// the sheet sync. Doesn't send receipts, push to the PO sheet, or touch
+// PayMongo — callers own those side effects, since the website route
+// and the Messenger buy flow want different ones (e.g. Messenger orders
+// have no email to receipt, and go on to create a checkout session).
+export async function insertOrder({ id, customerName, email, phone, address, paymentMethod, messengerPsid, resolvedItems }) {
+  const total = resolvedItems.reduce((sum, { product, qty }) => sum + product.price * qty, 0);
+
+  // Everything below happens atomically — either the whole order, all
+  // its line items, and every stock decrement succeed together, or
+  // none of it is written at all. Note: the transaction body uses
+  // `tx.prepare` (bound to this transaction's own connection), not the
+  // outer `db.prepare` — see db/index.js's transaction() for why.
+  const stockUpdates = []; // { sku, newStock, newStatus } — for pushing back to the sheet after commit
+  const placeOrder = db.transaction(async (tx) => {
+    await tx.prepare(`
+      INSERT INTO orders (id, customer_name, email, phone, address, payment_method, messenger_psid, status, payment_status, total, date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, to_char(now(), 'YYYY-MM-DD'))
+    `).run(id, customerName, email || null, phone || null, address || null, paymentMethod ?? null, messengerPsid || null, total);
+
+    const insertItem = tx.prepare("INSERT INTO order_items (order_id, product_id, name, qty, price) VALUES (?, ?, ?, ?, ?)");
+    const updateStock = tx.prepare("UPDATE products SET stock = ?, status = ? WHERE id = ?");
+
+    for (const { product, qty } of resolvedItems) {
+      // Use the product's real name/price at time of purchase, never
+      // whatever the client sent.
+      await insertItem.run(id, product.id, product.name, qty, product.price);
+
+      const newStock = Math.max(0, product.stock - qty);
+      const soldOut = newStock === 0;
+      const newStatus = soldOut ? "sold-out" : product.status;
+      await updateStock.run(newStock, newStatus, product.id);
+      // Only pass a status along to the sheet when this order is what
+      // actually sold the last one — a partial decrement shouldn't touch
+      // the sheet's status cell (it's whatever the admin already set it to).
+      if (product.sku) stockUpdates.push({ sku: product.sku, newStock, newStatus: soldOut ? "sold-out" : null });
+    }
+  });
+  await placeOrder();
+
+  return { stockUpdates };
+}
+
+// Fire-and-forget side effects every newly-created order needs, regardless
+// of which route created it: write the new stock counts (and any sold-out
+// flip) back to the Google Sheet, and mirror the PO into the "PO
+// Register"/"PO Items" tabs. Never lets a Sheets hiccup fail order
+// creation — same treatment as the rest of this file.
+export function announceNewOrder(order, stockUpdates) {
+  for (const { sku, newStock, newStatus } of stockUpdates) {
+    writeStockToSheet(sku, newStock, newStatus).then((result) => {
+      if (!result.written) {
+        console.warn(`Order ${order.id}: didn't update sheet stock for sku="${sku}": ${result.reason}`);
+      }
+    });
+  }
+  pushOrderToSheet(order).then((result) => {
+    if (!result.pushed) {
+      console.warn(`Order ${order.id}: didn't push PO to sheet: ${result.reason}`);
+    }
+  });
 }
 
 // GET /api/orders
@@ -77,59 +185,25 @@ router.post("/", publicWriteLimiter, asyncHandler(async (req, res) => {
   // Re-derive every item from the database — id and qty are the only
   // things taken from the request; name/price/availability all come
   // from the product row itself.
-  const getProduct = db.prepare("SELECT * FROM products WHERE id = ?");
-  const resolvedItems = [];
-  for (const raw of items) {
-    const qty = Number(raw?.qty);
-    if (!Number.isInteger(qty) || qty < 1 || qty > 999) {
-      return res.status(400).json({ error: "Each item needs a valid quantity (1-999)" });
+  let resolvedItems;
+  try {
+    resolvedItems = await resolveOrderItems(items);
+  } catch (err) {
+    if (err instanceof OrderError) {
+      return res.status(err.status).json({ error: err.message });
     }
-    const product = raw?.id ? await getProduct.get(raw.id) : null;
-    if (!product) {
-      return res.status(400).json({ error: "One of the items in your cart no longer exists. Please refresh and try again." });
-    }
-    if (product.status !== "available") {
-      return res.status(409).json({ error: `"${product.name}" is no longer available.` });
-    }
-    if (product.stock < qty) {
-      return res.status(409).json({ error: `Only ${product.stock} of "${product.name}" left in stock.` });
-    }
-    resolvedItems.push({ product, qty });
+    throw err;
   }
 
-  const total = resolvedItems.reduce((sum, { product, qty }) => sum + product.price * qty, 0);
-
-  // Everything below happens atomically — either the whole order, all
-  // its line items, and every stock decrement succeed together, or
-  // none of it is written at all. Note: the transaction body uses
-  // `tx.prepare` (bound to this transaction's own connection), not the
-  // outer `db.prepare` — see db/index.js's transaction() for why.
-  const stockUpdates = []; // { sku, newStock, newStatus } — for pushing back to the sheet after commit
-  const placeOrder = db.transaction(async (tx) => {
-    await tx.prepare(`
-      INSERT INTO orders (id, customer_name, email, phone, address, payment_method, status, payment_status, total, date)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, to_char(now(), 'YYYY-MM-DD'))
-    `).run(id, customer.trim(), email.trim().toLowerCase(), cleanPhone, address?.trim() || null, paymentMethod ?? null, total);
-
-    const insertItem = tx.prepare("INSERT INTO order_items (order_id, product_id, name, qty, price) VALUES (?, ?, ?, ?, ?)");
-    const updateStock = tx.prepare("UPDATE products SET stock = ?, status = ? WHERE id = ?");
-
-    for (const { product, qty } of resolvedItems) {
-      // Use the product's real name/price at time of purchase, never
-      // whatever the client sent.
-      await insertItem.run(id, product.id, product.name, qty, product.price);
-
-      const newStock = Math.max(0, product.stock - qty);
-      const soldOut = newStock === 0;
-      const newStatus = soldOut ? "sold-out" : product.status;
-      await updateStock.run(newStock, newStatus, product.id);
-      // Only pass a status along to the sheet when this order is what
-      // actually sold the last one — a partial decrement shouldn't touch
-      // the sheet's status cell (it's whatever the admin already set it to).
-      if (product.sku) stockUpdates.push({ sku: product.sku, newStock, newStatus: soldOut ? "sold-out" : null });
-    }
+  const { stockUpdates } = await insertOrder({
+    id,
+    customerName: customer.trim(),
+    email: email.trim().toLowerCase(),
+    phone: cleanPhone,
+    address: address?.trim() || null,
+    paymentMethod,
+    resolvedItems,
   });
-  await placeOrder();
 
   const order = await getOrderWithItems(id);
 
@@ -139,28 +213,7 @@ router.post("/", publicWriteLimiter, asyncHandler(async (req, res) => {
     console.warn(`Order ${id} created, but receipt email wasn't sent: ${receipt.reason}`);
   }
 
-  // Push the new stock count (and, if it just sold out, status) back to
-  // the Google Sheet for any item that came from the sheet sync (has a
-  // sku), so a later pull sync — e.g. the one that runs on server
-  // restart — doesn't overwrite this decrement with the sheet's stale,
-  // pre-order values. Fire-and-forget, same as the receipt email: a
-  // sheet write hiccup should never fail the order.
-  for (const { sku, newStock, newStatus } of stockUpdates) {
-    writeStockToSheet(sku, newStock, newStatus).then((result) => {
-      if (!result.written) {
-        console.warn(`Order ${id}: didn't update sheet stock for sku="${sku}": ${result.reason}`);
-      }
-    });
-  }
-
-  // Mirror the new PO into the Google Sheet's "PO Register"/"PO Items"
-  // tabs, same fire-and-forget treatment as the receipt email and the
-  // stock write-back above — never lets a Sheets hiccup fail the order.
-  pushOrderToSheet(order).then((result) => {
-    if (!result.pushed) {
-      console.warn(`Order ${id}: didn't push PO to sheet: ${result.reason}`);
-    }
-  });
+  announceNewOrder(order, stockUpdates);
 
   res.status(201).json(order);
 }));

@@ -4,6 +4,7 @@ import { asyncHandler } from "../asyncHandler.js";
 import { verifyPaymongoSignature, isPaymongoWebhookConfigured } from "../paymongo.js";
 import { updatePaymentStatusInSheet, updateOrderStatusInSheet } from "../sync/poSheetSync.js";
 import { getOrderWithItems } from "./orders.js";
+import { sendOrderConfirmationMessenger, alertOwner } from "./messenger.js";
 
 const router = Router();
 
@@ -74,6 +75,13 @@ router.post("/webhook", asyncHandler(async (req, res) => {
     return res.sendStatus(200);
   }
 
+  // Deliberately does NOT touch status when the order was cancelled —
+  // see the wasCancelled block below for why silently un-cancelling
+  // here would be dangerous (stock already got returned to inventory
+  // on cancel, and may have been sold again since). payment_status
+  // always flips to paid regardless of status: a real payment came in,
+  // and that fact must never be hidden even if the order needs manual
+  // review before anything ships.
   await db.prepare(`
     UPDATE orders
     SET payment_status = 'paid',
@@ -88,6 +96,7 @@ router.post("/webhook", asyncHandler(async (req, res) => {
   // it can't find an existing one, and that path needs the full shape.
   const updated = await getOrderWithItems(order.id);
   const wasPending = order.status === "pending";
+  const wasCancelled = order.status === "cancelled";
 
   // Same fire-and-forget treatment as every other order mutation in
   // routes/orders.js — a Sheets hiccup should never fail the webhook.
@@ -97,6 +106,45 @@ router.post("/webhook", asyncHandler(async (req, res) => {
   if (wasPending && updated.status === "approved") {
     updateOrderStatusInSheet(updated).then((r) => {
       if (!r.written) console.warn(`Order ${updated.id}: didn't update sheet status: ${r.reason}`);
+    });
+  }
+
+  // A payment landing on an order that's already cancelled — e.g. a
+  // customer paid via an old checkout link after the order was
+  // cancelled for taking too long, or an admin cancelled it while
+  // payment was in flight. This is rare and needs a human decision
+  // (restock permitting, reinstate the order — otherwise refund the
+  // customer), so it's deliberately NOT auto-resolved: the order stays
+  // "cancelled" (its stock already went back to inventory on cancel
+  // and may since have been sold to someone else — silently flipping
+  // status back to "approved" here could oversell). Loudly flag it
+  // instead, both in the logs and directly to the owner if reachable.
+  if (wasCancelled) {
+    console.error(
+      `⚠️  Order ${updated.id}: PayMongo payment (₱${updated.total.toLocaleString()}) came through AFTER this order was already cancelled. ` +
+      `Left status as "cancelled" — payment_status is now "paid". Needs manual review: confirm stock is still available, then either reinstate the order or refund the customer.`
+    );
+    alertOwner(
+      `⚠️ PAYMENT ON A CANCELLED ORDER\n\n` +
+      `Order #${updated.id} (${updated.customer}) was already cancelled, but a payment of ₱${updated.total.toLocaleString()} just came through via PayMongo.\n\n` +
+      `The order was NOT auto-reinstated (its stock may already be sold to someone else). Please check the admin dashboard and either restore the order or refund the customer.`
+    ).catch((err) => {
+      console.error(`Order ${updated.id}: failed to alert owner about payment on a cancelled order:`, err.message);
+    });
+  }
+
+  // If this order came from the Messenger "buy now" flow, send the
+  // paid confirmation/PO back in that same chat — it's the only receipt
+  // these customers get, since Messenger orders never collect an email.
+  // Fire-and-forget, same treatment as the sheet writes above: a
+  // Messenger send hiccup should never fail the webhook (PayMongo would
+  // just retry it, redelivering the same event). Skipped for the
+  // wasCancelled case above — sending a cheerful "we'll prepare your
+  // order!" receipt would be actively misleading while it's pending
+  // manual review.
+  if (updated.messengerPsid && !wasCancelled) {
+    sendOrderConfirmationMessenger(updated).catch((err) => {
+      console.error(`Order ${updated.id}: failed to send Messenger payment confirmation:`, err.message);
     });
   }
 

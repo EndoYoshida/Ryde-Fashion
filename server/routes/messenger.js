@@ -4,6 +4,8 @@ import { db } from "../db/index.js";
 import { asyncHandler } from "../asyncHandler.js";
 import { cloudinaryUrl } from "../upload.js";
 import { findMatchingProduct, isConfidentMatch } from "../imageMatch.js";
+import { resolveOrderItems, insertOrder, announceNewOrder, getOrderWithItems, OrderError } from "./orders.js";
+import { createCheckoutSession, isPaymongoConfigured } from "../paymongo.js";
 
 const router = Router();
 
@@ -350,6 +352,182 @@ function setLastOrder(senderId, order) {
   lastOrders.set(senderId, { id: order.id, status: order.status });
 }
 
+// --- "Buy now" flow ------------------------------------------------------
+// A tiny state machine, same in-memory/per-process pattern as every other
+// Map above (resets on redeploy — fine at this volume). Once a customer
+// says they want to buy a specific product, we need their name and phone
+// before an order can be created, so the NEXT plain-text message(s) from
+// that sender are treated as answers to those two questions instead of
+// being run through the usual intent classifier — see the check near the
+// top of processMessagingEvent().
+const buyFlows = new Map(); // senderId -> { step: "name"|"phone", product, qty, name? }
+const CANCEL_WORDS = new Set(["cancel", "cancel na lang", "never mind", "nevermind", "huwag na lang", "wag na lang", "ayaw ko na"]);
+
+function startBuyFlow(senderId, product, qty) {
+  buyFlows.set(senderId, { step: "name", product, qty });
+}
+
+function clearBuyFlow(senderId) {
+  buyFlows.delete(senderId);
+}
+
+// Generates a Messenger-order id in the same spirit as makeTicketId() in
+// email.js — short, sortable-ish, and collision-safe enough that the
+// retry loop in handleBuyAnswer() below only ever needs one extra try.
+function makeMessengerOrderId() {
+  return `MSG-${Date.now().toString(36).toUpperCase()}${Math.floor(Math.random() * 1000)}`;
+}
+
+function formatPesos(amount) {
+  return `₱${Number(amount).toLocaleString()}`;
+}
+
+// origin used to build PayMongo's success_url/cancel_url — same env var
+// and same "never trust a request header for this" reasoning as
+// routes/orders.js's POST /:id/paymongo-session. A Messenger customer
+// never actually lands on either URL (they stay in the chat and get
+// their confirmation there via the webhook), but PayMongo requires both
+// to be set on every Checkout Session regardless.
+function frontendOrigin() {
+  return (process.env.FRONTEND_ORIGIN || "http://localhost:5173").split(",")[0].trim();
+}
+
+// Handles one turn of the buy flow: `text` is the customer's raw reply
+// to whichever question we just asked. Advances name -> phone -> creates
+// the order and sends a PayMongo payment link, or bails out cleanly if
+// they type a cancel word or something invalid at any step.
+async function handleBuyAnswer(senderId, text) {
+  const flow = buyFlows.get(senderId);
+  if (!flow) return; // shouldn't happen — caller already checked has()
+
+  pushHistory(senderId, "customer", text);
+
+  if (CANCEL_WORDS.has(text.toLowerCase().replace(/[!.]+$/, ""))) {
+    clearBuyFlow(senderId);
+    const msg = `No worries, order cancelled! Let me know if you'd like to order something else. 😊`;
+    await sendMessage(senderId, msg);
+    pushHistory(senderId, "bot", msg);
+    return;
+  }
+
+  if (flow.step === "name") {
+    if (text.length === 0 || text.length > 200) {
+      const msg = `Sorry, could you send just your full name po?`;
+      await sendMessage(senderId, msg);
+      pushHistory(senderId, "bot", msg);
+      return;
+    }
+    flow.name = text;
+    flow.step = "phone";
+    const msg = `Thanks, ${text}! And what's the best contact/mobile number to reach you po?`;
+    await sendMessage(senderId, msg);
+    pushHistory(senderId, "bot", msg);
+    return;
+  }
+
+  // flow.step === "phone"
+  const digitCount = (text.match(/\d/g) || []).length;
+  if (digitCount < 7 || text.length > 20) {
+    const msg = `That doesn't look like a valid contact number po — could you send it again? (e.g. 09171234567)`;
+    await sendMessage(senderId, msg);
+    pushHistory(senderId, "bot", msg);
+    return;
+  }
+  const phone = text;
+  const { product, qty, name } = flow;
+
+  // Re-validate against the DB right before creating the order — stock
+  // could have moved since the flow started (someone else bought the
+  // last one, an admin marked it unavailable, etc.). Same protection
+  // POST /api/orders gives every website order.
+  let resolvedItems;
+  try {
+    resolvedItems = await resolveOrderItems([{ id: product.id, qty }]);
+  } catch (err) {
+    clearBuyFlow(senderId);
+    const msg = err instanceof OrderError
+      ? `Ay sorry po, ${err.message} Let me know if you'd like to order something else!`
+      : `Sorry, something went wrong preparing your order — please try again in a bit.`;
+    if (!(err instanceof OrderError)) console.error(`[messenger] buy flow order resolution failed for ${senderId}:`, err);
+    await sendMessage(senderId, msg);
+    pushHistory(senderId, "bot", msg);
+    return;
+  }
+
+  // Collision-safe id generation — see makeMessengerOrderId() above.
+  let orderId = makeMessengerOrderId();
+  while (await db.prepare("SELECT id FROM orders WHERE id = ?").get(orderId)) {
+    orderId = makeMessengerOrderId();
+  }
+
+  const { stockUpdates } = await insertOrder({
+    id: orderId,
+    customerName: name,
+    email: null,
+    phone,
+    address: null,
+    paymentMethod: "online",
+    messengerPsid: senderId,
+    resolvedItems,
+  });
+
+  const order = await getOrderWithItems(orderId);
+  announceNewOrder(order, stockUpdates);
+  clearBuyFlow(senderId);
+  setLastOrder(senderId, order);
+
+  if (!isPaymongoConfigured) {
+    const msg = `Your order #${order.id} for ${qty}x ${product.brand} ${product.name} (total ${formatPesos(order.total)}) is saved! Online payment isn't set up yet on our end though — ${OWNER_NAME} will follow up with you shortly on how to pay. 🙏`;
+    await sendMessage(senderId, msg);
+    pushHistory(senderId, "bot", msg);
+    await notifyOwner(senderId, text, `New Messenger order #${order.id} needs a manual payment link — PayMongo isn't configured.`);
+    return;
+  }
+
+  const origin = frontendOrigin();
+  let session;
+  try {
+    session = await createCheckoutSession({
+      order: { id: order.id, customer: name, email: null, phone, total: order.total },
+      successUrl: `${origin}/checkout?order=${encodeURIComponent(order.id)}&payment=success`,
+      cancelUrl: `${origin}/checkout?order=${encodeURIComponent(order.id)}&payment=cancelled`,
+    });
+  } catch (err) {
+    console.error(`[messenger] order ${order.id}: failed to create PayMongo checkout session:`, err.message);
+    const msg = `Your order #${order.id} is saved (total ${formatPesos(order.total)}), but I couldn't generate a payment link right now — ${OWNER_NAME} will send you one shortly. 🙏`;
+    await sendMessage(senderId, msg);
+    pushHistory(senderId, "bot", msg);
+    await notifyOwner(senderId, text, `New Messenger order #${order.id} — PayMongo session creation failed, needs a manual payment link.`);
+    return;
+  }
+
+  await db.prepare("UPDATE orders SET paymongo_checkout_session_id = ? WHERE id = ?").run(session.id, order.id);
+
+  const msg =
+    `Order #${order.id} confirmed — ${qty}x ${product.brand} ${product.name}, total ${formatPesos(order.total)}. 🎉\n\n` +
+    `Tap this link to pay securely (GCash/QR/Card): ${session.attributes.checkout_url}\n\n` +
+    `I'll send your confirmation right here as soon as payment goes through!`;
+  await sendMessage(senderId, msg);
+  pushHistory(senderId, "bot", msg);
+}
+
+// Called by routes/paymongoWebhook.js right after a Messenger-originated
+// order (order.messengerPsid set) is marked paid, so the customer gets
+// their PO/confirmation back in the same chat instead of only by email
+// (which they never gave one for). Mirrors sendOrderReceiptEmail()'s
+// content in email.js, just formatted for a Messenger bubble.
+export async function sendOrderConfirmationMessenger(order) {
+  const lines = order.items.map((it) => `• ${it.name} x${it.qty} — ${formatPesos(it.price * it.qty)}`).join("\n");
+  const text =
+    `✅ Payment received — thank you, ${order.customer}!\n\n` +
+    `Order #${order.id}\n\n` +
+    `${lines}\n\n` +
+    `Total: ${formatPesos(order.total)}\n\n` +
+    `We'll prepare your order for shipping/pickup and update you here. Message us anytime if you have questions — and thank you for shopping with ${STORE_NAME}! 💗`;
+  await sendMessage(order.messengerPsid, text);
+  pushHistory(order.messengerPsid, "bot", text);
+}
+
 // --- Human handoff: actually pings the owner ---------------------------
 // Sends a real Messenger DM to OWNER_PSID with the customer's message and
 // a link straight into that conversation in Meta's Page Inbox, so you can
@@ -412,6 +590,21 @@ async function notifyOwner(senderId, customerText, reason = "Customer wants to s
   lines.push(``, `Open Conversation: ${inboxLink(senderId)}`);
 
   await sendMessage(OWNER_PSID, lines.join("\n"));
+}
+
+// Sends a direct alert to the shop owner for server-side events that
+// need a human's attention but aren't tied to any specific ongoing
+// Messenger conversation — unlike notifyOwner() above, there's no
+// senderId/customer context here. Used by routes/paymongoWebhook.js for
+// the "payment landed on an already-cancelled order" edge case. Same
+// no-OWNER_PSID-configured fallback as notifyOwner: log and move on,
+// never throw.
+export async function alertOwner(message) {
+  if (!OWNER_PSID) {
+    console.warn("OWNER_PSID not set — can't send owner alert. See setup notes near the top of this file.");
+    return;
+  }
+  await sendMessage(OWNER_PSID, message);
 }
 
 // --- Handoff pause ------------------------------------------------------
@@ -485,6 +678,12 @@ async function interpretMessage(text, { history, focusProduct } = {}) {
     `Use "advice" for a judgment call the customer wants help with — which size/fit suits them, ` +
     `comparing options ("oversized or regular?"), whether they should get XL vs XXL — as opposed to a ` +
     `plain fact lookup. Put a short restatement of what they want judged in advice_question.\n\n` +
+    `Use "buy" when the customer is READY to purchase a specific item right now — not just asking about ` +
+    `it (e.g. "I'll take it", "order ko na po", "bibilhin ko yung black one", "buy this", "pa-order na ` +
+    `po ako nito") — as opposed to how_to_order, which is a general "how does ordering work" question ` +
+    `with no specific item in mind. search_terms/color/size work exactly like product_search (empty ` +
+    `search_terms if they clearly mean the item already in focus). Set quantity only if a number was ` +
+    `given — default is 1, don't guess a number that wasn't said.\n\n` +
     `For "product_search": search_terms are the product/brand/category keywords in ENGLISH, translated ` +
     `if Tagalog, filler words removed (e.g. "meron ba kayo bag for men" -> ["bag"]). Set color/size ` +
     `ONLY if the customer named them (e.g. "may black XL?" -> color: "black", size: "XL"). Leave ` +
@@ -513,9 +712,9 @@ async function interpretMessage(text, { history, focusProduct } = {}) {
             properties: {
               intent: {
                 type: "string",
-                enum: ["faq", "product_search", "order_status", "advice", "other"],
+                enum: ["faq", "product_search", "order_status", "advice", "buy", "other"],
                 description:
-                  "'faq' for a policy/store question, 'product_search' for a specific product/brand/category (including price/stock/color/size questions about it), 'order_status' for an existing order, 'advice' for a judgment call (which size/fit/option), 'other' for greetings/small talk/anything else.",
+                  "'faq' for a policy/store question, 'product_search' for a specific product/brand/category (including price/stock/color/size questions about it), 'order_status' for an existing order, 'advice' for a judgment call (which size/fit/option), 'buy' when they're ready to purchase a specific item now, 'other' for greetings/small talk/anything else.",
               },
               faq_id: {
                 type: "string",
@@ -536,6 +735,10 @@ async function interpretMessage(text, { history, focusProduct } = {}) {
               advice_question: {
                 type: "string",
                 description: 'Only set when intent is "advice". A short restatement of the judgment call being asked, in English.',
+              },
+              quantity: {
+                type: "integer",
+                description: 'Only set when intent is "buy" AND a specific quantity was named. Omit to default to 1.',
               },
             },
             required: ["intent"],
@@ -868,6 +1071,17 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
           return;
         }
 
+        // --- "Buy now" flow in progress: the next plain-text message is
+        // the answer to whichever question we just asked (name, then
+        // phone) — handle it directly instead of running it through the
+        // intent classifier, same way isHandoffActive() above short-
+        // circuits everything else. An image with no text mid-flow just
+        // falls through to the normal photo handling below.
+        if (text && buyFlows.has(senderId)) {
+          await handleBuyAnswer(senderId, text.trim());
+          return;
+        }
+
         // --- Image-only message (no text) --------------------------------
         // Try to match the photo against the catalog first (see
         // imageMatch.js — pgvector nearest-neighbor over Gemini image
@@ -1090,6 +1304,59 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
               );
               factsParts.push(chunks.join(" "));
               anyResolved = true;
+              continue;
+            }
+
+            if (item.intent === "buy") {
+              const words = (item.search_terms || []).map((w) => w.toLowerCase());
+              const focus = focusProducts.get(senderId);
+
+              let products;
+              if (words.length === 0 && focus) {
+                products = await db
+                  .prepare("SELECT id, name, brand, price, stock, status FROM products WHERE id = $1")
+                  .all(focus.id);
+              } else if (words.length === 0) {
+                anyFailed = true;
+                factsParts.push(`They said they want to buy something but didn't name a specific item, and nothing was discussed yet — ask which product they'd like to order.`);
+                continue;
+              } else {
+                products = await searchProducts({ words, color: item.color, size: item.size });
+              }
+
+              if (products.length === 0) {
+                anyFailed = true;
+                factsParts.push(`They want to buy "${(item.search_terms || []).join(" ") || text}" but no matching product was found — ask them to confirm the exact product name or brand.`);
+                continue;
+              }
+
+              if (products.length > 1) {
+                anyFailed = true;
+                factsParts.push(`They want to buy something but ${products.length} products matched: ${products.map((p) => `${p.brand} ${p.name}`).join(", ")} — ask which exact one they mean before proceeding.`);
+                continue;
+              }
+
+              const product = products[0];
+              if (product.status !== "available" || product.stock < 1) {
+                anyFailed = true;
+                factsParts.push(`They want to buy the ${product.brand} ${product.name}, but it's currently out of stock — let them know, don't start an order.`);
+                continue;
+              }
+
+              const requestedQty = Number.isInteger(item.quantity) && item.quantity > 0 ? item.quantity : 1;
+              if (requestedQty > product.stock) {
+                anyFailed = true;
+                factsParts.push(`They want to buy ${requestedQty}x ${product.brand} ${product.name}, but only ${product.stock} left in stock — let them know and ask if they'd like ${product.stock} instead.`);
+                continue;
+              }
+
+              anyResolved = true;
+              setFocusProduct(senderId, product);
+              startBuyFlow(senderId, product, requestedQty);
+              factsParts.push(
+                `Great, they want to buy ${requestedQty}x ${product.brand} ${product.name} (${formatPesos(product.price)} each, total ${formatPesos(product.price * requestedQty)}). ` +
+                `Confirm this warmly and ask for their full name so the order can be prepared — ask ONLY for their name in this reply, nothing else yet.`
+              );
               continue;
             }
 

@@ -86,7 +86,10 @@ export async function createCheckoutSession({ order, successUrl, cancelUrl }) {
         attributes: {
           billing: {
             name: order.customer,
-            email: order.email,
+            // Messenger "buy now" orders have no email — omit the key
+            // entirely (rather than sending JSON null) so PayMongo
+            // doesn't choke on it; the website checkout always has one.
+            email: order.email || undefined,
             phone: order.phone || undefined,
           },
           send_email_receipt: false, // we already send our own branded receipt on order creation
