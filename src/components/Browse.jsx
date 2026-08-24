@@ -3,42 +3,46 @@ import { Search, SlidersHorizontal, ChevronDown } from "lucide-react";
 import { CATEGORIES, GENDER_OPTIONS, peso } from "../data/products";
 import ProductCard from "./ProductCard";
 
-export default function Browse({ products, openProduct, toggleWish, wishlist, addToCart, search, setSearch, categoryFilter, setCategoryFilter, tagFilter, setTagFilter }) {
+export default function Browse({ products, openProduct, toggleWish, wishlist, addToCart, search, setSearch, categoryFilter, setCategoryFilter, brandFilter, setBrandFilter, tagFilter, setTagFilter }) {
   const [sort, setSort] = useState("newest");
   const [priceMax, setPriceMax] = useState(16000);
   const [availOnly, setAvailOnly] = useState(false);
+  const [saleOnly, setSaleOnly] = useState(false);
   const [genderFilter, setGenderFilter] = useState(null);
-  const [colorFilter, setColorFilter] = useState(null);
   // Collapsed by default — expanding to show every filter section right
   // away buried the product grid below the fold on first load.
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  // Colors are free text (unlike category/gender, which are fixed
-  // lists), so the filter chips are built from whatever colors actually
+  // Brands are free text (unlike category/gender, which are fixed
+  // lists), so the filter chips are built from whatever brands actually
   // appear on the currently loaded products, rather than a hardcoded list.
-  const colorOptions = useMemo(() => {
+  const brandOptions = useMemo(() => {
     const set = new Set();
-    products.forEach((p) => { if (p.color) set.add(p.color); });
+    products.forEach((p) => { if (p.brand) set.add(p.brand); });
     return [...set].sort();
   }, [products]);
+
+  const isOnSale = (p) => p.oldPrice && p.oldPrice > p.price;
 
   const filtered = useMemo(() => {
     let list = products.filter((p) => p.price <= priceMax);
     if (categoryFilter) list = list.filter((p) => p.category === categoryFilter);
     if (tagFilter === "Bestseller") list = list.filter((p) => p.bestseller);
+    else if (tagFilter === "Sale") list = list.filter(isOnSale);
     else if (tagFilter) list = list.filter((p) => p.tag === tagFilter);
     if (genderFilter) list = list.filter((p) => p.gender === genderFilter);
-    if (colorFilter) list = list.filter((p) => p.color === colorFilter);
+    if (brandFilter) list = list.filter((p) => p.brand === brandFilter);
     if (search) list = list.filter((p) => (p.name + p.brand).toLowerCase().includes(search.toLowerCase()));
     if (availOnly) list = list.filter((p) => p.status === "available");
+    if (saleOnly) list = list.filter(isOnSale);
     if (sort === "price-asc") list = [...list].sort((a, b) => a.price - b.price);
     if (sort === "price-desc") list = [...list].sort((a, b) => b.price - a.price);
     if (sort === "popularity") list = [...list].sort((a, b) => b.reviews - a.reviews);
     if (sort === "newest") list = [...list].sort((a, b) => b.id - a.id);
     return list;
-  }, [products, categoryFilter, tagFilter, genderFilter, colorFilter, search, sort, priceMax, availOnly]);
+  }, [products, categoryFilter, tagFilter, genderFilter, brandFilter, search, sort, priceMax, availOnly, saleOnly]);
 
-  const heading = tagFilter === "New" ? "New Arrivals" : tagFilter === "Bestseller" ? "Best Sellers" : "Shop all products";
+  const heading = tagFilter === "New" ? "New Arrivals" : tagFilter === "Bestseller" ? "Best Sellers" : tagFilter === "Sale" ? "Items on Sale" : "Shop all products";
 
   return (
     <section className="browse" id="browse-section">
@@ -67,7 +71,7 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
                 <div className="filter-group">
                   <h5>Showing</h5>
                   <button className="filter-chip active" onClick={() => setTagFilter(null)}>
-                    {tagFilter === "New" ? "New Arrivals" : "Best Sellers"} &times;
+                    {tagFilter === "New" ? "New Arrivals" : tagFilter === "Sale" ? "Items on Sale" : "Best Sellers"} &times;
                   </button>
                 </div>
               )}
@@ -98,17 +102,17 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
                   </button>
                 ))}
               </div>
-              {colorOptions.length > 0 && (
+              {brandOptions.length > 0 && (
                 <div className="filter-group">
-                  <h5>Color</h5>
-                  <button className={`filter-chip ${!colorFilter ? "active" : ""}`} onClick={() => setColorFilter(null)}>All</button>
-                  {colorOptions.map((c) => (
+                  <h5>Brand</h5>
+                  <button className={`filter-chip ${!brandFilter ? "active" : ""}`} onClick={() => setBrandFilter(null)}>All</button>
+                  {brandOptions.map((b) => (
                     <button
-                      key={c}
-                      className={`filter-chip ${colorFilter === c ? "active" : ""}`}
-                      onClick={() => setColorFilter(c)}
+                      key={b}
+                      className={`filter-chip ${brandFilter === b ? "active" : ""}`}
+                      onClick={() => setBrandFilter(b)}
                     >
-                      {c}
+                      {b}
                     </button>
                   ))}
                 </div>
@@ -121,6 +125,10 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
                 <label className="checkbox-row">
                   <input type="checkbox" checked={availOnly} onChange={(e) => setAvailOnly(e.target.checked)} />
                   In stock only
+                </label>
+                <label className="checkbox-row">
+                  <input type="checkbox" checked={saleOnly} onChange={(e) => setSaleOnly(e.target.checked)} />
+                  On sale only
                 </label>
               </div>
             </div>

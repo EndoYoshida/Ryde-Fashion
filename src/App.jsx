@@ -3,10 +3,12 @@ import { signOut } from "firebase/auth";
 import "./styles.css";
 
 import { auth } from "./firebaseConfig";
+import logo from "./assets/logo.jpg";
 import Header from "./components/Header";
 import Hero from "./components/Hero";
 import About from "./components/About";
 import Categories from "./components/Categories";
+import Brands from "./components/Brands";
 import FeaturedProducts from "./components/FeaturedProducts";
 import Testimonials from "./components/Testimonials";
 import CTA from "./components/CTA";
@@ -86,6 +88,7 @@ export default function App() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState(null);
+  const [brandFilter, setBrandFilter] = useState(null);
   const [tagFilter, setTagFilter] = useState(null);
 
   // Live data loaded from the backend (SQLite via the Express API in
@@ -385,10 +388,11 @@ export default function App() {
     navigateTo("support");
     if (anchorId) scrollToId(anchorId);
   };
-  // Always explicitly sets category/tag filters (even to null) so a
+  // Always explicitly sets category/brand/tag filters (even to null) so a
   // previous filter never lingers when navigating from somewhere else.
   const goShop = (opts = {}) => {
     setCategoryFilter(opts.category ?? null);
+    setBrandFilter(opts.brand ?? null);
     setTagFilter(opts.tag ?? null);
     navigateTo("shop");
   };
@@ -452,7 +456,14 @@ export default function App() {
   const cartCount = cart.reduce((s, c) => s + c.qty, 0);
 
   if (loading) {
-    return <div className="app-loading">Loading Ryde&hellip;</div>;
+    return (
+      <div className="app-loading">
+        <div className="app-loading-inner">
+          <img src={logo} alt="Ryde" className="logo-img logo-hero" />
+          <span>Loading Ryde&hellip;</span>
+        </div>
+      </div>
+    );
   }
 
   if (area === "admin") {
@@ -504,9 +515,10 @@ export default function App() {
       {view === "home" && (
         <>
           <Hero goShop={goShop} />
-          <About />
           <Categories goShop={goShop} products={products} />
+          <Brands goShop={goShop} products={products} />
           <FeaturedProducts products={products} openProduct={setSelectedProduct} toggleWish={toggleWish} wishlist={wishlist} addToCart={addToCart} goShop={goShop} />
+          <About />
           <Testimonials />
           <CTA goShop={goShop} />
         </>
@@ -523,6 +535,8 @@ export default function App() {
           setSearch={setSearch}
           categoryFilter={categoryFilter}
           setCategoryFilter={setCategoryFilter}
+          brandFilter={brandFilter}
+          setBrandFilter={setBrandFilter}
           tagFilter={tagFilter}
           setTagFilter={setTagFilter}
         />

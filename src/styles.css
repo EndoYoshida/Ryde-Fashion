@@ -131,6 +131,7 @@
 /* categories */
 .cat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:18px; }
 .cat-grid-trending { grid-template-columns:repeat(2,1fr); max-width:640px; margin:0 auto 26px; }
+.cat-grid-trending-3 { grid-template-columns:repeat(3,1fr); max-width:920px; }
 .cat-card-special { background:var(--cream); border-color:var(--gold-light); }
 .cat-card-special:hover { border-color:var(--gold); box-shadow:0 10px 24px rgba(201,161,95,0.2); }
 .cat-card-special .cat-name { color:#8A5A46; }
@@ -229,6 +230,7 @@
 .filter-chip.active, .filter-chip:hover { color:var(--gold); }
 .range { width:100%; accent-color:var(--gold); }
 .checkbox-row { display:flex; align-items:center; gap:8px; font-size:13.5px; color:var(--ink-soft); }
+.checkbox-row + .checkbox-row { margin-top:10px; }
 .browse-toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; }
 .result-count { font-size:13px; color:var(--ink-soft); }
 .sort-select { border:1px solid var(--beige); padding:8px 12px; border-radius:3px; font-size:13px; background:var(--ivory); }
@@ -422,7 +424,7 @@
 
   /* grids */
   .cat-grid, .prod-grid { gap:12px; }
-  .cat-grid-trending { grid-template-columns:repeat(2,1fr); }
+  .cat-grid-trending, .cat-grid-trending-3 { grid-template-columns:repeat(2,1fr); }
   .related-row { grid-template-columns:repeat(2,1fr); gap:10px; }
   .footer-grid { grid-template-columns:1fr; gap:26px; }
   .admin-stat-grid { grid-template-columns:1fr 1fr; }
@@ -655,6 +657,9 @@
 }
 
 .app-loading { min-height:100vh; display:flex; align-items:center; justify-content:center; font-family:'Cormorant Garamond',serif; font-size:22px; color:var(--ink-soft); background:var(--ivory); }
+.app-loading-inner { display:flex; flex-direction:column; align-items:center; gap:14px; }
+.app-loading-inner .logo-img { animation:app-loading-pulse 1.6s ease-in-out infinite; }
+@keyframes app-loading-pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.65; transform:scale(0.94); } }
 .backend-error-banner { background:#F3DCDC; color:#7A2E2E; text-align:center; font-size:12.5px; padding:10px 16px; }
 .backend-error-banner code { background:rgba(0,0,0,0.08); padding:1px 6px; border-radius:3px; }
 

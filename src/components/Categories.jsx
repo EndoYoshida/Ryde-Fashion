@@ -1,11 +1,12 @@
 import React from "react";
-import { ChevronRight, Sparkles, Award } from "lucide-react";
+import { ChevronRight, Sparkles, Award, Tag } from "lucide-react";
 import { CATEGORIES } from "../data/products";
 import BlossomDivider from "./ui/BlossomDivider";
 
 export default function Categories({ goShop, products }) {
   const newCount = products.filter((p) => p.tag === "New").length;
   const bestCount = products.filter((p) => p.bestseller).length;
+  const saleCount = products.filter((p) => p.oldPrice && p.oldPrice > p.price).length;
 
   return (
     <section className="section">
@@ -15,7 +16,7 @@ export default function Categories({ goShop, products }) {
       </div>
       <BlossomDivider />
 
-      <div className="cat-grid cat-grid-trending">
+      <div className="cat-grid cat-grid-trending cat-grid-trending-3">
         <button className="cat-card cat-card-special" onClick={() => goShop({ tag: "New" })}>
           <Sparkles size={26} strokeWidth={1.25} color="#C9A15F" />
           <span className="cat-name">New Arrivals</span>
@@ -26,6 +27,12 @@ export default function Categories({ goShop, products }) {
           <Award size={26} strokeWidth={1.25} color="#C9A15F" />
           <span className="cat-name">Best Sellers</span>
           <span className="cat-count">{bestCount} items</span>
+          <span className="cat-browse">Browse <ChevronRight size={14} /></span>
+        </button>
+        <button className="cat-card cat-card-special" onClick={() => goShop({ tag: "Sale" })}>
+          <Tag size={26} strokeWidth={1.25} color="#C9A15F" />
+          <span className="cat-name">Item on Sale</span>
+          <span className="cat-count">{saleCount} items</span>
           <span className="cat-browse">Browse <ChevronRight size={14} /></span>
         </button>
       </div>

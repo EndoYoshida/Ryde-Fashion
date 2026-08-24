@@ -198,6 +198,7 @@ export default function ProductFormModal({ product, onClose, onSave, uploadImage
               <option value="">None</option>
               <option value="New">New</option>
               <option value="Bestseller">Bestseller</option>
+              <option value="Sale">Sale</option>
             </select>
           </label>
 
