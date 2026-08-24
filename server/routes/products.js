@@ -73,6 +73,8 @@ export async function rowToProduct(row) {
     name: row.name,
     brand: row.brand,
     category: row.category,
+    color: row.color ?? undefined,
+    gender: row.gender ?? undefined,
     price: row.price,
     oldPrice: row.old_price ?? undefined,
     stock: row.stock,
@@ -137,15 +139,15 @@ router.get("/", asyncHandler(async (req, res) => {
 
 // POST /api/products
 router.post("/", requireAdmin, asyncHandler(async (req, res) => {
-  const { name, brand, category, price, oldPrice, stock, status, tag, description, weight, variants } = req.body;
+  const { name, brand, category, color, gender, price, oldPrice, stock, status, tag, description, weight, variants } = req.body;
   if (!name || !brand || !category || price == null) {
     return res.status(400).json({ error: "name, brand, category, and price are required" });
   }
   const result = await db.prepare(`
-    INSERT INTO products (name, brand, category, price, old_price, stock, status, tag, description, weight, rating, reviews)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+    INSERT INTO products (name, brand, category, color, gender, price, old_price, stock, status, tag, description, weight, rating, reviews)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
     RETURNING id
-  `).run(name, brand, category, price, oldPrice ?? null, stock ?? 0, status ?? "available", tag ?? null, description?.trim() || null, weight ? Number(weight) : 0.3);
+  `).run(name, brand, category, color?.trim() || null, gender?.trim() || null, price, oldPrice ?? null, stock ?? 0, status ?? "available", tag ?? null, description?.trim() || null, weight ? Number(weight) : 0.3);
 
   await replaceVariants(result.lastInsertRowid, variants);
 
@@ -173,10 +175,11 @@ router.put("/:id", requireAdmin, asyncHandler(async (req, res) => {
 
   const merged = { ...(await rowToProduct(existing)), ...req.body };
   await db.prepare(`
-    UPDATE products SET name=?, brand=?, category=?, price=?, old_price=?, stock=?, status=?, tag=?, description=?, weight=?
+    UPDATE products SET name=?, brand=?, category=?, color=?, gender=?, price=?, old_price=?, stock=?, status=?, tag=?, description=?, weight=?
     WHERE id=?
   `).run(
-    merged.name, merged.brand, merged.category, merged.price,
+    merged.name, merged.brand, merged.category,
+    merged.color?.trim() || null, merged.gender?.trim() || null, merged.price,
     merged.oldPrice ?? null, merged.stock, merged.status, merged.tag ?? null,
     merged.description?.trim() || null,
     merged.weight ? Number(merged.weight) : 0.3,

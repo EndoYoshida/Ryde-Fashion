@@ -103,6 +103,14 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS paymongo_payment_id TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_method TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_detail TEXT;
 
+-- Color and gender, synced from the "COLOR" and "GENDER" columns in the
+-- Products sheet (see server/sync/sheetsSync.js's COLUMN_ALIASES). Added
+-- with ADD COLUMN IF NOT EXISTS rather than in the CREATE TABLE above so
+-- this applies cleanly to already-existing databases too (schema.sql
+-- runs on every server boot).
+ALTER TABLE products ADD COLUMN IF NOT EXISTS color TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS gender TEXT;
+
 CREATE TABLE IF NOT EXISTS order_items (
   id SERIAL PRIMARY KEY,
   order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,

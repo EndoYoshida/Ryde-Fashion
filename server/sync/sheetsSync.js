@@ -43,6 +43,8 @@ const COLUMN_ALIASES = {
   name: ["name", "productname", "title"],
   brand: ["brand"],
   category: ["category"],
+  color: ["color", "colour"],
+  gender: ["gender"],
   price: ["price"],
   oldPrice: ["oldprice", "originalprice", "wasprice"],
   stock: ["stock", "quantity", "qty"],
@@ -74,6 +76,8 @@ function rowToRecord(row, fieldMap) {
     name: get("name")?.toString().trim(),
     brand: get("brand")?.toString().trim(),
     category: get("category")?.toString().trim(),
+    color: get("color")?.toString().trim(),
+    gender: get("gender")?.toString().trim(),
     price: get("price"),
     oldPrice: get("oldPrice"),
     stock: get("stock"),
@@ -200,6 +204,8 @@ async function upsertProduct(record) {
     name: record.name,
     brand: record.brand,
     category: record.category,
+    color: record.color || null,
+    gender: record.gender || null,
     price,
     old_price: toIntOrNull(record.oldPrice),
     stock: toIntOrNull(record.stock) ?? 0,
@@ -212,21 +218,21 @@ async function upsertProduct(record) {
   let productId;
   if (existing) {
     await db.prepare(`
-      UPDATE products SET name=?, brand=?, category=?, price=?, old_price=?, stock=?, status=?, tag=?, description=?, weight=?
+      UPDATE products SET name=?, brand=?, category=?, color=?, gender=?, price=?, old_price=?, stock=?, status=?, tag=?, description=?, weight=?
       WHERE id=?
     `).run(
-      values.name, values.brand, values.category, values.price, values.old_price,
+      values.name, values.brand, values.category, values.color, values.gender, values.price, values.old_price,
       values.stock, values.status, values.tag, values.description, values.weight,
       existing.id
     );
     productId = existing.id;
   } else {
     const result = await db.prepare(`
-      INSERT INTO products (sku, name, brand, category, price, old_price, stock, status, tag, description, weight, rating, reviews)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+      INSERT INTO products (sku, name, brand, category, color, gender, price, old_price, stock, status, tag, description, weight, rating, reviews)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
       RETURNING id
     `).run(
-      record.sku, values.name, values.brand, values.category, values.price, values.old_price,
+      record.sku, values.name, values.brand, values.category, values.color, values.gender, values.price, values.old_price,
       values.stock, values.status, values.tag, values.description, values.weight,
     );
     productId = result.lastInsertRowid;
@@ -368,7 +374,7 @@ export async function writeStockToSheet(sku, newStock, newStatus) {
 // "images" is deliberately excluded — that direction only ever flows
 // sheet -> DB (via syncImagesForProduct), so an admin-uploaded photo is
 // never pushed out to the sheet's Drive-link column.
-const WRITE_BACK_FIELDS = ["name", "brand", "category", "price", "oldPrice", "stock", "status", "description", "weight", "tag", "variants"];
+const WRITE_BACK_FIELDS = ["name", "brand", "category", "color", "gender", "price", "oldPrice", "stock", "status", "description", "weight", "tag", "variants"];
 
 async function loadSheetHeaderAndRows() {
   const sheets = getSheetsClient();
@@ -405,6 +411,8 @@ export async function writeProductToSheet(product) {
       name: product.name,
       brand: product.brand,
       category: product.category,
+      color: product.color ?? "",
+      gender: product.gender ?? "",
       price: product.price,
       oldPrice: product.oldPrice ?? "",
       stock: product.stock,
