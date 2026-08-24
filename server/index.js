@@ -23,6 +23,8 @@ import ticketsRouter from "./routes/tickets.js";
 import newsletterRouter from "./routes/newsletter.js";
 import wishlistRouter from "./routes/wishlist.js";
 import messengerRouter from "./routes/messenger.js";
+import paymongoWebhookRouter from "./routes/paymongoWebhook.js";
+import { isPaymongoConfigured, isPaymongoWebhookConfigured, isPaymongoTestMode, paymongoEnabledMethods } from "./paymongo.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -112,6 +114,10 @@ app.use("/api/tickets", ticketsRouter);
 app.use("/api/newsletter", newsletterRouter);
 app.use("/api/wishlist", wishlistRouter);
 app.use("/api/messenger", messengerRouter);
+// Not behind generalLimiter's /api prefix concerns — PayMongo's own
+// retry behavior is the real rate control here, and this is mounted
+// under /api anyway so it does still pass through generalLimiter above.
+app.use("/api/paymongo", paymongoWebhookRouter);
 
 const POLL_INTERVAL_MS = 60 * 1000; // check for new support emails every minute
 
@@ -119,6 +125,14 @@ app.listen(PORT, () => {
   console.log(`Ryde API running at http://localhost:${PORT}`);
   if (!isFirebaseConfigured) {
     console.warn("Warning: FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY are not set in server/.env — customer sign-in will not work.");
+  }
+  if (isPaymongoConfigured) {
+    console.log(`PayMongo online payment is ${isPaymongoTestMode ? "in TEST mode" : "LIVE"}, offering: ${paymongoEnabledMethods.join(", ")}.`);
+    if (!isPaymongoWebhookConfigured) {
+      console.warn("Warning: PAYMONGO_WEBHOOK_SECRET is not set — orders paid via PayMongo will never be marked paid. Register a webhook in the PayMongo Dashboard and set this. See README.");
+    }
+  } else {
+    console.warn("Warning: PAYMONGO_SECRET_KEY is not set in server/.env — the storefront's \"Pay Online\" option stays hidden until it is.");
   }
   if (isEmailConfigured()) {
     console.log(`Checking ${process.env.EMAIL_USER} for new support emails every ${POLL_INTERVAL_MS / 1000}s.`);

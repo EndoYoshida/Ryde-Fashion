@@ -8,10 +8,11 @@ import { publicWriteLimiter } from "../rateLimit.js";
 import { writeStockToSheet } from "../sync/sheetsSync.js";
 import { pushOrderToSheet, updateOrderStatusInSheet, updatePaymentStatusInSheet } from "../sync/poSheetSync.js";
 import { asyncHandler } from "../asyncHandler.js";
+import { createCheckoutSession, isPaymongoConfigured, paymongoEnabledMethods, isPaymongoTestMode } from "../paymongo.js";
 
 const router = Router();
 
-async function getOrderWithItems(id) {
+export async function getOrderWithItems(id) {
   const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
   if (!order) return null;
   const items = await db.prepare("SELECT name, qty, price FROM order_items WHERE order_id = ?").all(id);
@@ -175,6 +176,75 @@ router.post("/:id/proof", upload.single("proof"), asyncHandler(async (req, res) 
 
   await db.prepare("UPDATE orders SET proof_image = ? WHERE id = ?").run(req.file.filename, req.params.id);
   res.status(201).json(await getOrderWithItems(req.params.id));
+}));
+
+// GET /api/orders/:id  (public — used by the checkout page to poll an
+// order's status after redirecting back from PayMongo's hosted checkout,
+// and by the payment-cancelled screen to know what to retry. Same trust
+// model as POST /:id/proof above: anyone calling this needs to already
+// know the exact, unguessable order id, which is only ever shown to the
+// customer who placed it — see makeOrderId() in Checkout.jsx for why
+// that id can't be brute-forced.)
+router.get("/:id", asyncHandler(async (req, res) => {
+  const order = await getOrderWithItems(req.params.id);
+  if (!order) return res.status(404).json({ error: "Order not found" });
+  res.json(order);
+}));
+
+// GET /api/orders/paymongo/config  (public — tells the storefront which
+// PayMongo payment methods are actually live right now, so the checkout
+// page's "Pay Online" option only appears once PAYMONGO_SECRET_KEY is
+// set, and automatically starts offering GCash/Cards/etc. the moment
+// those get added to PAYMONGO_PAYMENT_METHODS in server/.env, with no
+// frontend redeploy needed. Doesn't conflict with GET "/:id" above —
+// that only ever matches a single path segment, and this is two.)
+router.get("/paymongo/config", (req, res) => {
+  res.json({
+    enabled: isPaymongoConfigured && paymongoEnabledMethods.length > 0,
+    methods: paymongoEnabledMethods,
+    testMode: isPaymongoTestMode,
+  });
+});
+
+// POST /api/orders/:id/paymongo-session  (public — creates a PayMongo
+// Checkout Session for an order that was already placed with "Pay
+// Online" selected, and returns the hosted checkout_url to redirect the
+// browser to. Same publicWriteLimiter as placing an order itself, since
+// this also makes an outbound PayMongo API call per request.)
+router.post("/:id/paymongo-session", publicWriteLimiter, asyncHandler(async (req, res) => {
+  if (!isPaymongoConfigured) {
+    return res.status(503).json({ error: "Online payment isn't set up yet. Please choose another payment method." });
+  }
+
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!order) return res.status(404).json({ error: "Order not found" });
+  if (order.payment_status === "paid") {
+    return res.status(409).json({ error: "This order has already been paid." });
+  }
+
+  // origin is derived from FRONTEND_ORIGIN (first entry if several are
+  // configured) rather than trusted from the request, so a malicious
+  // Origin/Referer header can't redirect PayMongo's success/cancel flow
+  // to an attacker-controlled domain.
+  const frontendOrigin = (process.env.FRONTEND_ORIGIN || "http://localhost:5173").split(",")[0].trim();
+  const successUrl = `${frontendOrigin}/checkout?order=${encodeURIComponent(order.id)}&payment=success`;
+  const cancelUrl = `${frontendOrigin}/checkout?order=${encodeURIComponent(order.id)}&payment=cancelled`;
+
+  let session;
+  try {
+    session = await createCheckoutSession({
+      order: { id: order.id, customer: order.customer_name, email: order.email, phone: order.phone, total: order.total },
+      successUrl,
+      cancelUrl,
+    });
+  } catch (err) {
+    console.error(`Order ${order.id}: failed to create PayMongo checkout session:`, err.message);
+    return res.status(502).json({ error: "Couldn't start online payment right now. Please try again in a moment." });
+  }
+
+  await db.prepare("UPDATE orders SET paymongo_checkout_session_id = ? WHERE id = ?").run(session.id, order.id);
+
+  res.status(201).json({ checkoutUrl: session.attributes.checkout_url });
 }));
 
 // PATCH /api/orders/:id/status

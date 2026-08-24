@@ -87,6 +87,15 @@ CREATE TABLE IF NOT EXISTS orders (
   date TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD')
 );
 
+-- PayMongo: which Checkout Session (if any) this order's online payment
+-- went through, and the id of the actual Payment once PayMongo reports it
+-- paid via webhook. Nullable — orders paid by COD/manual GCash/bank proof
+-- never get these set. Added with ADD COLUMN IF NOT EXISTS rather than in
+-- the CREATE TABLE above so this applies cleanly to already-existing
+-- databases too (schema.sql runs on every server boot).
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS paymongo_checkout_session_id TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS paymongo_payment_id TEXT;
+
 CREATE TABLE IF NOT EXISTS order_items (
   id SERIAL PRIMARY KEY,
   order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
