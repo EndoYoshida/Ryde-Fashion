@@ -363,34 +363,72 @@ function setLastOrder(senderId, order) {
 const buyFlows = new Map(); // senderId -> { step, product, qty, name?, phone?, paymentMethod?, deliveryMethod?, deliveryDetail? }
 const CANCEL_WORDS = new Set(["cancel", "cancel na lang", "never mind", "nevermind", "huwag na lang", "wag na lang", "ayaw ko na"]);
 
-// Mode of Payment options — quick-reply title is what the customer taps
-// AND what comes back as the message text, so it doubles as the match
-// key (see handleBuyAnswer). Keep titles short — Messenger quick
-// replies truncate around 20 chars.
+// Mode of Payment options. Each option carries a stable, unique `id` —
+// this is what actually gets sent back to us as the tapped quick_reply's
+// PAYLOAD (see sendQuickReplies/findOption below), which is the reliable
+// way to know which button was pressed.
+//
+// We used to match on the button's TITLE text instead, because a tapped
+// quick reply's `message.text` echoes back the title. That breaks for two
+// independent reasons, both hit here:
+//   1. Facebook truncates quick_reply titles to ~20 characters for
+//      display AND for what's echoed back as message.text. Several of
+//      these titles ("Pay Online (GCash/Card/QR)", "Cash on Delivery
+//      (COD)", "Pickup - Olongapo (LPO Store)"...) are longer than that,
+//      so the text that comes back never equals the full title —
+//      findOption() found nothing, we re-asked "please pick one of the
+//      options below po", forever.
+//   2. Even for short titles, the old matching used
+//      `clean.includes(title)` — backwards. That only matches when the
+//      customer's ENTIRE message contains the full button title as a
+//      substring, so typing a shorter paraphrase like "pay online" (which
+//      should reasonably match "Pay Online (GCash/Card/QR)") never did.
+//
+// Fix: match on the untruncated `payload` first (titles can be as long
+// as you want now), and keep a corrected, more permissive text match as
+// a fallback for when the customer types instead of tapping.
 const PAYMENT_OPTIONS = [
-  { title: "Pay Online (GCash/Card/QR)", value: "online" },
-  { title: "Cash on Delivery (COD)", value: "cod" },
+  { id: "pay_online", title: "Pay Online (GCash/Card/QR)", value: "online" },
+  { id: "pay_cod", title: "Cash on Delivery (COD)", value: "cod" },
 ];
 
 // Mode of Delivery options. `needsAddress` gates the address step;
 // pickup options additionally set a fixed deliveryDetail (which
 // partner store) instead of asking anything further; meetup skips
-// straight to connecting the customer with the store owner.
+// straight to connecting the customer with the store owner. Note the
+// three "Pickup" rows share `value: "Pickup"` (that's the delivery
+// method) but each needs its OWN `id` so tapping one unambiguously
+// picks that store, not just "some pickup option".
 const DELIVERY_OPTIONS = [
-  { title: "J&T", value: "J&T", needsAddress: true },
-  { title: "Lalamove", value: "Lalamove", needsAddress: true },
-  { title: "JRS Express", value: "JRS Express", needsAddress: true },
-  { title: "LBC", value: "LBC", needsAddress: true },
-  { title: "AP Cargo", value: "AP Cargo", needsAddress: true },
-  { title: "Pickup - Valenzuela", value: "Pickup", needsAddress: false, detail: "Valenzuela partner store" },
-  { title: "Pickup - Angeles", value: "Pickup", needsAddress: false, detail: "Angeles partner store" },
-  { title: "Pickup - Olongapo (LPO Store)", value: "Pickup", needsAddress: false, detail: "LPO Store, Olongapo" },
-  { title: "Meetup", value: "Meetup", needsAddress: false, isMeetup: true },
+  { id: "delivery_jnt", title: "J&T", value: "J&T", needsAddress: true },
+  { id: "delivery_lalamove", title: "Lalamove", value: "Lalamove", needsAddress: true },
+  { id: "delivery_jrs", title: "JRS Express", value: "JRS Express", needsAddress: true },
+  { id: "delivery_lbc", title: "LBC", value: "LBC", needsAddress: true },
+  { id: "delivery_apcargo", title: "AP Cargo", value: "AP Cargo", needsAddress: true },
+  { id: "pickup_valenzuela", title: "Pickup - Valenzuela", value: "Pickup", needsAddress: false, detail: "Valenzuela partner store" },
+  { id: "pickup_angeles", title: "Pickup - Angeles", value: "Pickup", needsAddress: false, detail: "Angeles partner store" },
+  { id: "pickup_olongapo", title: "Pickup - Olongapo (LPO Store)", value: "Pickup", needsAddress: false, detail: "LPO Store, Olongapo" },
+  { id: "meetup", title: "Meetup", value: "Meetup", needsAddress: false, isMeetup: true },
 ];
 
-function findOption(options, text) {
-  const clean = text.trim().toLowerCase();
-  return options.find((o) => o.title.toLowerCase() === clean) || options.find((o) => clean.includes(o.title.toLowerCase()));
+// `payload` is the quick_reply payload echoed back untruncated when the
+// customer TAPS a button — always trust that first when present. `text`
+// is the fallback for when they type instead: normalize both sides and
+// match if either contains the other, so a short paraphrase ("pay
+// online", "cod") matches a longer title, and an exact/truncated title
+// still matches too.
+function findOption(options, text, payload) {
+  if (payload) {
+    const byPayload = options.find((o) => o.id === payload);
+    if (byPayload) return byPayload;
+  }
+  if (!text) return null;
+  const clean = text.trim().toLowerCase().replace(/[!.]+$/, "");
+  if (!clean) return null;
+  return (
+    options.find((o) => o.title.toLowerCase() === clean) ||
+    options.find((o) => o.title.toLowerCase().includes(clean) || clean.includes(o.title.toLowerCase()))
+  );
 }
 
 function startBuyFlow(senderId, product, qty) {
@@ -426,7 +464,7 @@ function frontendOrigin() {
 // to whichever question we just asked. Advances name -> phone -> creates
 // the order and sends a PayMongo payment link, or bails out cleanly if
 // they type a cancel word or something invalid at any step.
-async function handleBuyAnswer(senderId, text) {
+async function handleBuyAnswer(senderId, text, quickReplyPayload = null) {
   const flow = buyFlows.get(senderId);
   if (!flow) return; // shouldn't happen — caller already checked has()
 
@@ -471,7 +509,7 @@ async function handleBuyAnswer(senderId, text) {
   }
 
   if (flow.step === "payment") {
-    const option = findOption(PAYMENT_OPTIONS, text);
+    const option = findOption(PAYMENT_OPTIONS, text, quickReplyPayload);
     if (!option) {
       await sendQuickReplies(senderId, `Please pick one of the options below po:`, PAYMENT_OPTIONS);
       pushHistory(senderId, "bot", `[re-asked mode of payment]`);
@@ -485,7 +523,7 @@ async function handleBuyAnswer(senderId, text) {
   }
 
   if (flow.step === "delivery") {
-    const option = findOption(DELIVERY_OPTIONS, text);
+    const option = findOption(DELIVERY_OPTIONS, text, quickReplyPayload);
     if (!option) {
       await sendQuickReplies(senderId, `Please pick one of the options below po:`, DELIVERY_OPTIONS);
       pushHistory(senderId, "bot", `[re-asked mode of delivery]`);
@@ -994,17 +1032,29 @@ async function searchProducts({ words = [], color, size } = {}) {
     return `(p.name ILIKE $${i} OR p.brand ILIKE $${i} OR p.category ILIKE $${i})`;
   });
 
+  // Bug fix: this used to be a plain INNER JOIN onto product_variants
+  // whenever color/size was given, which silently excluded any product
+  // with NO rows in product_variants at all — the opposite of the intent
+  // described above ("still matches on name/brand/category alone" for
+  // products that don't track variants). A single-SKU item whose
+  // color is baked into its own name (e.g. "TM Mesh Black/Gold") has no
+  // variant rows, so as soon as Gemini picked up "Black/Gold" as a color
+  // and passed it here, the INNER JOIN threw the product out entirely —
+  // even though the plain name/brand words alone would have matched it.
+  // LEFT JOIN + "match this variant row OR there are no variant rows for
+  // this product" keeps that product eligible either way.
   let variantJoin = "";
   const variantConditions = [];
   if (color || size) {
-    variantJoin = "JOIN product_variants v ON v.product_id = p.id";
+    variantJoin = "LEFT JOIN product_variants v ON v.product_id = p.id";
+    const noVariantsTracked = `NOT EXISTS (SELECT 1 FROM product_variants v2 WHERE v2.product_id = p.id)`;
     if (color) {
       params.push(`%${color}%`);
-      variantConditions.push(`v.color ILIKE $${params.length}`);
+      variantConditions.push(`(v.color ILIKE $${params.length} OR ${noVariantsTracked})`);
     }
     if (size) {
       params.push(size);
-      variantConditions.push(`v.size ILIKE $${params.length}`);
+      variantConditions.push(`(v.size ILIKE $${params.length} OR ${noVariantsTracked})`);
     }
   }
 
@@ -1219,23 +1269,38 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
         // circuits everything else. An image with no text mid-flow just
         // falls through to the normal photo handling below.
         if (text && buyFlows.has(senderId)) {
-          await handleBuyAnswer(senderId, text.trim());
+          await handleBuyAnswer(senderId, text.trim(), event.message?.quick_reply?.payload || null);
           return;
         }
 
-        // --- Image-only message (no text) --------------------------------
+        // --- Image message (with or without a caption) --------------------
         // Try to match the photo against the catalog first (see
         // imageMatch.js — pgvector nearest-neighbor over Gemini image
-        // embeddings). Per your call: only act on it when the match is
-        // confident; anything less just falls through to asking the
-        // customer to name the item, same as before image matching
-        // existed. This also degrades safely if pgvector/embeddings
-        // aren't set up yet (imageMatch throws, caught below) or if no
-        // catalog photo has an embedding at all (findMatchingProduct
-        // returns null) — either way, same "ask for the name" fallback.
-        if (hasImage && !text) {
-          pushHistory(senderId, "customer", "[sent a photo of an item]");
+        // embeddings). This now runs whenever an image attachment is
+        // present, NOT only when there's no caption. The old `hasImage &&
+        // !text` gate meant a shared/forwarded product photo sent WITH a
+        // caption (e.g. "paorder po neto") skipped image matching entirely
+        // — the bot only ever saw the caption, decided no item was named,
+        // and asked "which item?" even though a photo of it was right
+        // there in the same message. When Gemini's separate text-intent
+        // pass on that caption later resolved against something else (or
+        // the image match completed on a slight delay), the customer saw
+        // two conflicting replies stacked on top of each other.
+        //
+        // Per your call: only act on the photo when the match is
+        // confident; anything less falls through the same way it always
+        // did. This also degrades safely if pgvector/embeddings aren't set
+        // up yet (imageMatch throws, caught below) or if no catalog photo
+        // has an embedding at all (findMatchingProduct returns null) —
+        // either way, same "ask for the name" fallback when there's no
+        // caption to fall back to instead.
+        pushHistory(
+          senderId,
+          "customer",
+          text && hasImage ? `${text} [+ sent a photo of an item]` : hasImage ? "[sent a photo of an item]" : text
+        );
 
+        if (hasImage) {
           const imageUrl = (event.message?.attachments || []).find((a) => a.type === "image")?.payload?.url;
           const match = imageUrl
             ? await findMatchingProduct(imageUrl).catch((err) => {
@@ -1248,7 +1313,9 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
             // Treat it exactly like a resolved text-based product search —
             // same downstream state (focus product, failure/clarification
             // reset) so a follow-up like "magkano?" works the same way it
-            // would after a normal search.
+            // would after a normal search — and so a caption sent
+            // alongside the photo (handled below) resolves against THIS
+            // product instead of asking which item was meant.
             resetFailure(senderId);
             clearPendingClarification(senderId);
             photoAwaitingName.delete(senderId);
@@ -1264,22 +1331,31 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
             const line = formatReplyLine(match.product);
             await sendMessage(senderId, line);
             pushHistory(senderId, "bot", line);
+
+            // No caption to act on — done. If there IS a caption
+            // ("paorder po neto", "magkano?", etc.), fall through so it
+            // gets answered against the focus product we just set,
+            // instead of returning here and leaving it unanswered.
+            if (!text) return;
+          } else if (!text) {
+            if (!isPendingClarification(senderId)) {
+              const msg = `Got your photo! Could you tell me the item name or brand so I can check stock for you? 📸`;
+              setPendingClarification(senderId);
+              photoAwaitingName.set(senderId, true);
+              await sendMessage(senderId, msg);
+              pushHistory(senderId, "bot", msg);
+            }
             return;
           }
-
-          if (!isPendingClarification(senderId)) {
-            const msg = `Got your photo! Could you tell me the item name or brand so I can check stock for you? 📸`;
-            setPendingClarification(senderId);
-            photoAwaitingName.set(senderId, true);
-            await sendMessage(senderId, msg);
-            pushHistory(senderId, "bot", msg);
-          }
-          return;
+          // else: image attachment didn't confidently match anything, but
+          // there IS caption text — fall through to the normal text path
+          // below so the caption still gets a real answer instead of
+          // being silently dropped.
         }
 
         try {
-          pushHistory(senderId, "customer", text);
-          if (hasImage) pushHistory(senderId, "customer", "[sent a photo of an item along with that message]");
+          // Customer message (text and/or photo note) was already recorded
+          // above, before the image-match attempt.
 
           // Turns a fact (or an instruction describing what to say) into
           // an actual natural-language reply in the customer's own
@@ -1631,7 +1707,11 @@ async function sendQuickReplies(recipientId, text, options) {
       recipient: { id: recipientId },
       message: {
         text,
-        quick_replies: options.map((o) => ({ content_type: "text", title: o.title, payload: o.value })),
+        // payload must be each option's unique `id`, not `.value` — two
+        // Pickup rows in DELIVERY_OPTIONS share the same `.value`
+        // ("Pickup"), which would make a tapped payload ambiguous between
+        // them. `id` is unique per row; findOption() matches on it.
+        quick_replies: options.map((o) => ({ content_type: "text", title: o.title, payload: o.id })),
       },
     }),
   });
