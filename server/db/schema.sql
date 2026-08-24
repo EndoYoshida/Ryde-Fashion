@@ -103,6 +103,23 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS paymongo_payment_id TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_method TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_detail TEXT;
 
+-- Which Messenger customer (PSID) placed this order, for orders that came
+-- from the chatbot's "buy now" flow rather than the website checkout. The
+-- app code (routes/orders.js insertOrder/getOrderWithItems, routes/
+-- messenger.js finalizeBuyFlow) has referenced orders.messenger_psid for a
+-- while — this column was just never added here, so every Messenger order
+-- was failing at insert with 'column "messenger_psid" of relation "orders"
+-- does not exist' (Postgres error 42703).
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS messenger_psid TEXT;
+
+-- Messenger "buy now" orders never collect an email (finalizeBuyFlow
+-- passes email: null to insertOrder) — only the website checkout does.
+-- The original NOT NULL was written back when orders only ever came from
+-- the website. Drop it so chat orders can actually insert; website orders
+-- keep collecting email as normal, this only stops rejecting the ones
+-- that don't have one. Idempotent — a no-op if already nullable.
+ALTER TABLE orders ALTER COLUMN email DROP NOT NULL;
+
 -- Color and gender, synced from the "COLOR" and "GENDER" columns in the
 -- Products sheet (see server/sync/sheetsSync.js's COLUMN_ALIASES). Added
 -- with ADD COLUMN IF NOT EXISTS rather than in the CREATE TABLE above so
