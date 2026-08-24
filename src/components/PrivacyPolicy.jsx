@@ -23,7 +23,7 @@ export default function PrivacyPolicy() {
           accessories, imported from the United States, Japan, and Canada, and sold to customers in the Philippines.
         </p>
         <ul>
-          <li><strong>Business/legal name:</strong> Ronadane G. Sito, doing business as Ryde Fashion</li>
+          <li><strong>Business/legal name:</strong> Ryde-N Ron Fashion Jewelry Shop (a DTI-registered business name, sole proprietorship of Ronadane G. Sito), doing business as &ldquo;Ryde&rdquo;</li>
           <li><strong>Registered address:</strong> 20 JP Rizal, Arty Subdivision, Karuhatan, Valenzuela City</li>
           <li><strong>Contact email:</strong> rydecompany.ph@gmail.com</li>
         </ul>
@@ -185,12 +185,6 @@ export default function PrivacyPolicy() {
         <p>
           <strong>Email:</strong> rydecompany.ph@gmail.com<br />
           <strong>Address:</strong> 20 JP Rizal, Arty Subdivision, Karuhatan, Valenzuela City
-        </p>
-
-        <p className="legal-disclaimer">
-          This page was drafted based on a review of the Site's codebase and the data fields it actually collects. It
-          is a starting template, not legal advice &mdash; please fill in the bracketed placeholders and have it
-          reviewed by a lawyer familiar with Philippine data privacy law before relying on it.
         </p>
       </div>
     </section>
