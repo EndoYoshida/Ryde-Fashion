@@ -324,32 +324,71 @@ async function upsertProduct(record) {
   };
 }
 
-async function hasDriveImage(productId, driveFileId) {
-  return Boolean(
-    await db.prepare("SELECT id FROM product_images WHERE product_id = ? AND drive_file_id = ?")
-      .get(productId, driveFileId)
-  );
-}
-
+// Reconciles a product's images against its sheet cell (source of truth
+// for drive-synced images), instead of only ever ADDING newly-linked
+// photos. Previously, updating a Drive link in the sheet left the old,
+// wrong photo in place — it was added first, so it stayed sort_order 0
+// (what ProductCard/ProductImage actually displays) with the corrected
+// photo sitting unused behind it. See scripts/cleanupStaleProductImages.js
+// for the one-off cleanup of rows already in that state from before this
+// fix; this is what stops it from happening again on every future sync.
+//
+// Admin-uploaded images (drive_file_id IS NULL) are never touched here —
+// this only reconciles the set of drive_file_id-backed images against
+// the sheet cell's current list.
 async function syncImagesForProduct(productId, imagesCell) {
+  // A blank Images cell means "nothing entered yet for this row", not
+  // "remove every photo" — leave whatever's already synced alone rather
+  // than wiping a product's photos just because the cell wasn't filled
+  // in on some particular sync pass.
   if (!imagesCell) return { added: 0, failed: 0 };
-  const fileIds = String(imagesCell)
-    .split(/[,\n]/)
-    .map(extractDriveFileId)
-    .filter(Boolean);
+
+  const fileIds = String(imagesCell).split(/[,\n]/).map(extractDriveFileId).filter(Boolean);
+
+  const existingDrive = await db.prepare(
+    "SELECT id, filename, drive_file_id, sort_order FROM product_images WHERE product_id = ? AND drive_file_id IS NOT NULL"
+  ).all(productId);
+  const existingByFileId = new Map(existingDrive.map((img) => [img.drive_file_id, img]));
+
+  // Drop any previously-synced drive image whose file id is no longer
+  // listed in the cell — it was either replaced with a corrected link or
+  // removed outright, and either way it shouldn't keep displaying.
+  const keepIds = new Set(fileIds);
+  for (const img of existingDrive) {
+    if (keepIds.has(img.drive_file_id)) continue;
+    await db.prepare("DELETE FROM product_images WHERE id = ?").run(img.id);
+    deleteCloudinaryImage(img.filename);
+    trashDriveFile(img.drive_file_id); // fire-and-forget, same contract as elsewhere in this file
+  }
 
   let added = 0;
   let failed = 0;
-  const maxOrderRow = await db.prepare("SELECT COALESCE(MAX(sort_order), -1) AS m FROM product_images WHERE product_id = ?").get(productId);
-  let nextOrder = maxOrderRow.m + 1;
+
+  // Admin-uploaded images (no drive_file_id) keep whatever order they
+  // already have; drive-synced images are placed after them, in the same
+  // left-to-right order as the sheet cell, so the first Drive link in the
+  // cell is what actually shows first once no admin photos are ahead of it.
+  const maxNonDriveOrder = await db.prepare(
+    "SELECT COALESCE(MAX(sort_order), -1) AS m FROM product_images WHERE product_id = ? AND drive_file_id IS NULL"
+  ).get(productId);
+  let order = maxNonDriveOrder.m + 1;
 
   for (const fileId of fileIds) {
-    if (await hasDriveImage(productId, fileId)) continue; // already synced, skip re-download
+    const existingImg = existingByFileId.get(fileId);
+    if (existingImg) {
+      // Already synced and still listed — just make sure its position
+      // still matches where it currently sits in the sheet cell.
+      if (existingImg.sort_order !== order) {
+        await db.prepare("UPDATE product_images SET sort_order = ? WHERE id = ?").run(order, existingImg.id);
+      }
+      order++;
+      continue;
+    }
     try {
       const filename = await downloadDriveImage(fileId);
       const result = await db.prepare(
         "INSERT INTO product_images (product_id, filename, sort_order, drive_file_id) VALUES (?, ?, ?, ?) RETURNING id"
-      ).run(productId, filename, nextOrder++, fileId);
+      ).run(productId, filename, order++, fileId);
       // Fire-and-forget, same reasoning as the admin-upload path in
       // routes/products.js: embedding calls out to Gemini and shouldn't
       // slow down (or fail) the sheet sync. If it fails, embedding stays
