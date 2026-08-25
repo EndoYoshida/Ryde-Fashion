@@ -6,7 +6,7 @@ export default function PrivacyPolicy() {
       <div className="section-head">
         <p className="eyebrow">Legal</p>
         <h2>Privacy Policy</h2>
-        <p className="lede">Effective date: August 24, 2026 &middot; Last updated: August 24, 2026</p>
+        <p className="lede">Effective date: August 24, 2026 &middot; Last updated: August 25, 2026</p>
       </div>
 
       <div className="legal-content">
@@ -46,11 +46,11 @@ export default function PrivacyPolicy() {
           <li>Full name, email address, and phone number</li>
           <li>Shipping address, including province, city/municipality, barangay, and ZIP code</li>
           <li>Optional order notes</li>
-          <li>Selected payment method (GCash, BDO, UnionBank, or Cash on Delivery)</li>
+          <li>Selected payment method (PayMongo online payment or Cash on Delivery)</li>
           <li>
-            A <strong>proof-of-payment image</strong>, if you pay via GCash, BDO, or UnionBank &mdash; a screenshot or
-            photo you upload to confirm your transfer, which may show partial account or transaction details from
-            your bank or e-wallet
+            <strong>PayMongo transaction data</strong>, if you pay online &mdash; PayMongo processes your payment
+            directly and shares limited transaction details (such as payment status and method used) with us to
+            confirm your order. We do not receive or store your full card, GCash, or e-wallet credentials.
           </li>
           <li>Your order and purchase history</li>
         </ul>
@@ -83,7 +83,7 @@ export default function PrivacyPolicy() {
         <ul>
           <li>Create and manage your account</li>
           <li>Process, fulfill, and ship your orders, including calculating shipping fees and coordinating delivery</li>
-          <li>Verify proof-of-payment submissions and confirm orders</li>
+          <li>Confirm and reconcile payments made through PayMongo or Cash on Delivery</li>
           <li>Communicate with you about your orders, account, or support requests</li>
           <li>Send newsletter updates, if you subscribe</li>
           <li>Display product reviews and ratings you choose to submit publicly</li>
@@ -96,7 +96,7 @@ export default function PrivacyPolicy() {
         <ul>
           <li><strong>Shipping/courier partner:</strong> We share your name, shipping address, and phone number with our delivery courier, J&amp;T Express, so your order can be delivered.</li>
           <li><strong>Service providers:</strong> We use Firebase (Google) for account authentication and Google Sign-In.</li>
-          <li><strong>Payment verification:</strong> Proof-of-payment images you upload are stored and reviewed internally to confirm your order.</li>
+          <li><strong>Payment processor:</strong> If you pay online, we share your order amount and relevant order details with PayMongo, a licensed payment processor, to complete your transaction. PayMongo handles your payment credentials directly; we do not have access to your full card, GCash, or e-wallet login details.</li>
           <li><strong>Legal requirements:</strong> We may disclose information if required by law, regulation, legal process, or governmental request.</li>
           <li><strong>Business transfers:</strong> If Ryde is involved in a merger, acquisition, or sale of assets, customer information may be transferred as part of that transaction.</li>
         </ul>
@@ -119,9 +119,9 @@ export default function PrivacyPolicy() {
               <td>Name, shipping address, phone number</td>
             </tr>
             <tr>
-              <td>GCash / BDO / UnionBank</td>
-              <td>Customer-initiated payment transfers</td>
-              <td>Payment proof screenshots you choose to upload</td>
+              <td>PayMongo</td>
+              <td>Online payment processing (GCash, Maya, cards)</td>
+              <td>Order amount, payment status, and transaction details</td>
             </tr>
           </tbody>
         </table>
@@ -130,7 +130,7 @@ export default function PrivacyPolicy() {
         <h3>6. Data Retention</h3>
         <p>
           We retain account information for as long as your account remains active. We retain order records,
-          including proof-of-payment images, for as long as necessary to fulfill orders, address disputes, and
+          including PayMongo transaction details, for as long as necessary to fulfill orders, address disputes, and
           comply with our legal and accounting obligations. You may request deletion of your account and associated
           personal data at any time (see Section 8), subject to records we are legally required to keep.
         </p>
@@ -138,7 +138,7 @@ export default function PrivacyPolicy() {
         <h3>7. Data Security</h3>
         <p>
           We take reasonable technical and organizational measures to protect your information, including
-          authenticated, token-based access to your account and restricting access to order, payment-proof, and
+          authenticated, token-based access to your account and restricting access to order, payment, and
           support data to authorized personnel through the admin dashboard. No method of transmission or storage is
           100% secure, and we cannot guarantee absolute security.
         </p>

@@ -13,7 +13,7 @@ const FAQS = [
   },
   {
     q: "What payment methods do you accept?",
-    a: "We accept GCash, bank transfer (BDO or UnionBank), and Cash on Delivery (COD). For GCash and bank transfers, upload a screenshot of your payment confirmation at checkout so we can verify it quickly.",
+    a: "We accept online payments via PayMongo (GCash, Maya, and major debit/credit cards) and Cash on Delivery (COD). PayMongo payments are confirmed automatically at checkout, so there's no need to upload any proof of payment.",
   },
   {
     q: "Can I track my order?",
