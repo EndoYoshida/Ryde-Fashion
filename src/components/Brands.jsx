@@ -1,17 +1,23 @@
 import React, { useMemo } from "react";
 import { ChevronRight, Tag } from "lucide-react";
 import BlossomDivider from "./ui/BlossomDivider";
+import { canonicalizeBrand } from "../brands";
 
 // Brands are free text on each product (unlike category, which is a
 // fixed list), so — same approach as the old color filter — the cards
 // shown here are built from whatever brands actually appear on the
 // currently loaded products, sorted by how many items carry each one.
+// Grouped by canonicalizeBrand() rather than the raw p.brand string, so
+// two products stored as e.g. "CALVIN KLEIN" and "Calvin Klein" (or a
+// straight vs. curly apostrophe, or a known misspelling) count toward
+// the same tile instead of splitting into two.
 export default function Brands({ goShop, products }) {
   const brands = useMemo(() => {
     const counts = new Map();
     products.forEach((p) => {
       if (!p.brand) return;
-      counts.set(p.brand, (counts.get(p.brand) || 0) + 1);
+      const brand = canonicalizeBrand(p.brand);
+      counts.set(brand, (counts.get(brand) || 0) + 1);
     });
     return [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
@@ -32,7 +38,7 @@ export default function Brands({ goShop, products }) {
         {brands.map(([brand, count]) => (
           <button key={brand} className="cat-card" onClick={() => goShop({ brand })}>
             <Tag size={26} strokeWidth={1.25} color="#C9A15F" />
-            <span className="cat-name">{brand}</span>
+            <span className="cat-name">{brand.toUpperCase()}</span>
             <span className="cat-count">{count} items</span>
             <span className="cat-browse">Browse <ChevronRight size={14} /></span>
           </button>

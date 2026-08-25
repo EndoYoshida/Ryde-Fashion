@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { Search, SlidersHorizontal, ChevronDown } from "lucide-react";
 import { CATEGORIES, GENDER_OPTIONS, peso } from "../data/products";
+import { canonicalizeBrand } from "../brands";
 import ProductCard from "./ProductCard";
 
 export default function Browse({ products, openProduct, toggleWish, wishlist, addToCart, search, setSearch, categoryFilter, setCategoryFilter, brandFilter, setBrandFilter, tagFilter, setTagFilter }) {
@@ -16,9 +17,11 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
   // Brands are free text (unlike category/gender, which are fixed
   // lists), so the filter chips are built from whatever brands actually
   // appear on the currently loaded products, rather than a hardcoded list.
+  // Deduped via canonicalizeBrand() so e.g. "CALVIN KLEIN" and
+  // "Calvin Klein" produce one chip, not two.
   const brandOptions = useMemo(() => {
     const set = new Set();
-    products.forEach((p) => { if (p.brand) set.add(p.brand); });
+    products.forEach((p) => { if (p.brand) set.add(canonicalizeBrand(p.brand)); });
     return [...set].sort();
   }, [products]);
 
@@ -31,7 +34,7 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
     else if (tagFilter === "Sale") list = list.filter(isOnSale);
     else if (tagFilter) list = list.filter((p) => p.tag === tagFilter);
     if (genderFilter) list = list.filter((p) => p.gender === genderFilter);
-    if (brandFilter) list = list.filter((p) => p.brand === brandFilter);
+    if (brandFilter) list = list.filter((p) => canonicalizeBrand(p.brand) === brandFilter);
     if (search) list = list.filter((p) => (p.name + p.brand).toLowerCase().includes(search.toLowerCase()));
     if (availOnly) list = list.filter((p) => p.status === "available");
     if (saleOnly) list = list.filter(isOnSale);
@@ -112,7 +115,7 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
                       className={`filter-chip ${brandFilter === b ? "active" : ""}`}
                       onClick={() => setBrandFilter(b)}
                     >
-                      {b}
+                      {b.toUpperCase()}
                     </button>
                   ))}
                 </div>
