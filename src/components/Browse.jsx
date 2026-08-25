@@ -94,12 +94,11 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
               </div>
               <div className="filter-group">
                 <h5>Gender</h5>
-                <button className={`filter-chip ${!genderFilter ? "active" : ""}`} onClick={() => setGenderFilter(null)}>All</button>
                 {GENDER_OPTIONS.map((g) => (
                   <button
                     key={g}
                     className={`filter-chip ${genderFilter === g ? "active" : ""}`}
-                    onClick={() => setGenderFilter(g)}
+                    onClick={() => setGenderFilter(genderFilter === g ? null : g)}
                   >
                     {g}
                   </button>
@@ -108,12 +107,11 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
               {brandOptions.length > 0 && (
                 <div className="filter-group">
                   <h5>Brand</h5>
-                  <button className={`filter-chip ${!brandFilter ? "active" : ""}`} onClick={() => setBrandFilter(null)}>All</button>
                   {brandOptions.map((b) => (
                     <button
                       key={b}
                       className={`filter-chip ${brandFilter === b ? "active" : ""}`}
-                      onClick={() => setBrandFilter(b)}
+                      onClick={() => setBrandFilter(brandFilter === b ? null : b)}
                     >
                       {b.toUpperCase()}
                     </button>
