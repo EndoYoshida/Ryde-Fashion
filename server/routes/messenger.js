@@ -1083,10 +1083,11 @@ async function searchProducts({ words = [], color, size } = {}) {
   const where = [...wordConditions, ...variantConditions].join(" AND ") || "TRUE";
   const rows = await db
     .prepare(
-      `SELECT DISTINCT p.id, p.name, p.brand, p.price, p.stock, p.status
+      `SELECT DISTINCT p.id, p.name, p.brand, p.price, p.stock, p.status,
+              (p.status = 'available' AND p.stock > 0) AS in_stock_flag
        FROM products p ${variantJoin}
        WHERE ${where}
-       ORDER BY (p.status = 'available' AND p.stock > 0) DESC, p.name
+       ORDER BY in_stock_flag DESC, p.name
        LIMIT 3`
     )
     .all(...params);
