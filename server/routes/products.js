@@ -8,6 +8,7 @@ import { sendBackInStockEmail, sendNewProductEmail } from "../email.js";
 import { writeProductToSheet, clearProductRowInSheet } from "../sync/sheetsSync.js";
 import { trashDriveFile } from "../sync/driveImages.js";
 import { asyncHandler } from "../asyncHandler.js";
+import { canonicalizeBrand } from "../brands.js";
 
 // Fire-and-forget push of a just-created/edited product into the Google
 // Sheet, mirroring the admin dashboard change there. If the product had
@@ -33,14 +34,13 @@ function syncProductToSheet(product) {
 
 const router = Router();
 
-// Same whitespace-collapsing used by the sheet sync (see sync/sheetsSync.js)
-// applied here too, so a brand typed by hand in the admin dashboard — extra
-// spaces and all — can't quietly diverge from the same brand as it's
-// spelled on a sheet-synced row, which would otherwise split "Shop by
-// Brand" into two separate tiles for what's really one brand.
+// Canonicalizes against the shared brand list (see ../brands.js) so a
+// brand typed by hand in the admin dashboard — any casing, extra spaces
+// and all — resolves to the exact same spelling as the same brand
+// coming in through the sheet sync, instead of quietly diverging into
+// two separate "Shop by Brand" tiles for what's really one brand.
 function normalizeBrand(text) {
-  const trimmed = String(text || "").trim().replace(/\s+/g, " ");
-  return trimmed || null;
+  return canonicalizeBrand(text);
 }
 
 async function getImages(productId) {

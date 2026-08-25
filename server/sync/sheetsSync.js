@@ -4,6 +4,7 @@ import { embedProductImage } from "../imageMatch.js";
 import { getSheetsClient, isSheetsSyncConfigured } from "./googleAuth.js";
 import { extractDriveFileId, downloadDriveImage, trashDriveFile } from "./driveImages.js";
 import { rowToProduct, notifyWishlistersBackInStock, notifySubscribersNewProduct } from "../routes/products.js";
+import { canonicalizeBrand } from "../brands.js";
 
 // Sheet tab + range to read. Override via env if your tab isn't named
 // "Products" or you want to cap how many rows get scanned.
@@ -97,7 +98,7 @@ function rowToRecord(row, fieldMap) {
   return {
     sku: get("sku")?.toString().trim(),
     name: get("name")?.toString().trim(),
-    brand: normalizeSpacing(get("brand")),
+    brand: canonicalizeBrand(get("brand")),
     category: get("category")?.toString().trim(),
     color: get("color")?.toString().trim(),
     gender: get("gender")?.toString().trim(),
@@ -198,12 +199,12 @@ async function syncVariantsForProduct(productId, variantsCell) {
 }
 
 // Flags brands that only differ by capitalization/spacing across the
-// sheet (e.g. "Coach" on one row, "COACH" on another) — each exact string
-// becomes its own "Shop by Brand" card on the storefront, so an
-// inconsistently-cased brand silently splits its product count across
-// two tiles instead of raising an error anywhere. This only warns (the
-// sheet is still synced as-is); picking one canonical casing is a call
-// for whoever owns the sheet, not something to silently rewrite here.
+// sheet (e.g. "Coach" on one row, "COACH" on another). Brands in
+// CANONICAL_BRANDS (see ../brands.js) are already auto-corrected to one
+// spelling by canonicalizeBrand() above, so in practice this only fires
+// for a brand that isn't in that list yet — surfaced as a warning so
+// whoever owns the sheet can either fix the casing at the source or add
+// the brand to CANONICAL_BRANDS. Doesn't block the sync either way.
 function findBrandCasingConflicts(records) {
   const byNormalized = new Map(); // lowercase brand -> Set of exact casings seen
   for (const r of records) {
