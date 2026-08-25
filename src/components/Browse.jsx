@@ -22,7 +22,7 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
     return [...set].sort();
   }, [products]);
 
-  const isOnSale = (p) => p.oldPrice && p.oldPrice > p.price;
+  const isOnSale = (p) => p.onSale;
 
   const filtered = useMemo(() => {
     let list = products.filter((p) => p.price <= priceMax);

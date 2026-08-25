@@ -38,6 +38,29 @@ function normalizeHeader(h) {
   return String(h || "").trim().toLowerCase().replace(/[\s_]+/g, "");
 }
 
+// Trims and collapses internal whitespace runs to a single space, e.g.
+// "  Louis   Vuitton " -> "Louis Vuitton". Plain .trim() (used elsewhere
+// in this file) leaves double-spaces and tabs pasted mid-string alone,
+// which is enough on its own to split one brand into two different
+// "Shop by Brand" cards on the storefront, since brand matching is exact
+// string equality.
+function normalizeSpacing(text) {
+  return String(text || "").trim().replace(/\s+/g, " ");
+}
+
+// Catches the "pasted a SKU/model code into the Brand column" mistake —
+// the same class of error that let non-color values (e.g. "LS116",
+// "3W1.5") leak into the old Color filter. Short, no-space tokens that mix
+// letters and digits (or are digit-led) read as product codes, not brand
+// names — real brands with that shape (3M, Y-3) are rare enough that this
+// is a warning, not an auto-skip, so it doesn't block a legitimate row.
+function looksLikeSkuNotBrand(text) {
+  const t = String(text || "").trim();
+  if (!t || /\s/.test(t)) return false;
+  if (t.length > 8) return false;
+  return /\d/.test(t) && /[A-Za-z]/.test(t) || /^\d+[A-Za-z]?\.\d+$/.test(t);
+}
+
 const COLUMN_ALIASES = {
   sku: ["sku", "id", "productid"],
   name: ["name", "productname", "title"],
@@ -74,7 +97,7 @@ function rowToRecord(row, fieldMap) {
   return {
     sku: get("sku")?.toString().trim(),
     name: get("name")?.toString().trim(),
-    brand: get("brand")?.toString().trim(),
+    brand: normalizeSpacing(get("brand")),
     category: get("category")?.toString().trim(),
     color: get("color")?.toString().trim(),
     gender: get("gender")?.toString().trim(),
@@ -174,6 +197,30 @@ async function syncVariantsForProduct(productId, variantsCell) {
   return { count: variants.length, errors };
 }
 
+// Flags brands that only differ by capitalization/spacing across the
+// sheet (e.g. "Coach" on one row, "COACH" on another) — each exact string
+// becomes its own "Shop by Brand" card on the storefront, so an
+// inconsistently-cased brand silently splits its product count across
+// two tiles instead of raising an error anywhere. This only warns (the
+// sheet is still synced as-is); picking one canonical casing is a call
+// for whoever owns the sheet, not something to silently rewrite here.
+function findBrandCasingConflicts(records) {
+  const byNormalized = new Map(); // lowercase brand -> Set of exact casings seen
+  for (const r of records) {
+    if (!r.brand) continue;
+    const key = r.brand.toLowerCase();
+    if (!byNormalized.has(key)) byNormalized.set(key, new Set());
+    byNormalized.get(key).add(r.brand);
+  }
+  const conflicts = [];
+  for (const variants of byNormalized.values()) {
+    if (variants.size > 1) {
+      conflicts.push(`brand appears as ${[...variants].map((v) => `"${v}"`).join(" / ")} across different rows — pick one spelling so it doesn't split into separate "Shop by Brand" tiles`);
+    }
+  }
+  return conflicts;
+}
+
 async function fetchRows() {
   const sheets = getSheetsClient();
   const res = await sheets.spreadsheets.values.get({
@@ -207,6 +254,13 @@ async function upsertProduct(record) {
 
   const price = toIntOrNull(record.price);
   if (price === null) return { skipped: true, reason: "invalid price" };
+
+  // Doesn't block the sync — see looksLikeSkuNotBrand above — just
+  // surfaces a warning so whoever owns the sheet can double-check the
+  // Brand cell for that row.
+  const brandWarning = looksLikeSkuNotBrand(record.brand)
+    ? `brand "${record.brand}" looks like it might be a SKU/model code, not a real brand — double check the Brand column`
+    : null;
 
   const existing = await db.prepare("SELECT * FROM products WHERE sku = ?").get(record.sku);
   const wasOutOfStock = existing ? (existing.status !== "available" || existing.stock <= 0) : false;
@@ -262,6 +316,7 @@ async function upsertProduct(record) {
     created: !existing,
     wasOutOfStock,
     variantErrors,
+    brandWarning,
     descriptionWarning: descriptionIsBareUrl
       ? `description looked like a bare link ("${record.description.trim()}") — cleared instead of publishing it as copy`
       : null,
@@ -579,6 +634,8 @@ export async function runSheetsSync() {
     return summary;
   }
 
+  summary.errors.push(...findBrandCasingConflicts(records));
+
   for (const record of records) {
     try {
       const result = await upsertProduct(record);
@@ -592,6 +649,9 @@ export async function runSheetsSync() {
       else summary.updated++;
       if (result.variantErrors?.length) {
         summary.errors.push(`sku="${record.sku}" had unreadable variant entries: ${result.variantErrors.join("; ")}`);
+      }
+      if (result.brandWarning) {
+        summary.errors.push(`sku="${record.sku}": ${result.brandWarning}`);
       }
       if (result.descriptionWarning) {
         summary.errors.push(`sku="${record.sku}": ${result.descriptionWarning}`);

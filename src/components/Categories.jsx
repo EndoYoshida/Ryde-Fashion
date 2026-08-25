@@ -6,7 +6,7 @@ import BlossomDivider from "./ui/BlossomDivider";
 export default function Categories({ goShop, products }) {
   const newCount = products.filter((p) => p.tag === "New").length;
   const bestCount = products.filter((p) => p.bestseller).length;
-  const saleCount = products.filter((p) => p.oldPrice && p.oldPrice > p.price).length;
+  const saleCount = products.filter((p) => p.onSale).length;
 
   return (
     <section className="section">

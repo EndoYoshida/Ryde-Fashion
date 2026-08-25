@@ -24,7 +24,7 @@ export default function ProductCard({ p, openProduct, toggleWish, wishlist, addT
         <button className="prod-name" onClick={() => openProduct(p)}><HighlightText text={p.name} query={highlight} /></button>
         <Stars rating={p.rating} />
         <div className="prod-bottom">
-          <span className="prod-price">{peso(p.price)}{p.oldPrice && <span className="old-price">{peso(p.oldPrice)}</span>}</span>
+          <span className="prod-price">{peso(p.price)}{p.onSale && <span className="old-price">{peso(p.oldPrice)}</span>}</span>
           <button className="add-btn" disabled={disabled} onClick={() => addToCart(p)} aria-label="Add to cart">
             <ShoppingBag size={15} />
           </button>

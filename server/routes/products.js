@@ -33,6 +33,16 @@ function syncProductToSheet(product) {
 
 const router = Router();
 
+// Same whitespace-collapsing used by the sheet sync (see sync/sheetsSync.js)
+// applied here too, so a brand typed by hand in the admin dashboard — extra
+// spaces and all — can't quietly diverge from the same brand as it's
+// spelled on a sheet-synced row, which would otherwise split "Shop by
+// Brand" into two separate tiles for what's really one brand.
+function normalizeBrand(text) {
+  const trimmed = String(text || "").trim().replace(/\s+/g, " ");
+  return trimmed || null;
+}
+
 async function getImages(productId) {
   // `filename` holds the Cloudinary public_id (name kept as-is to avoid
   // an extra migration — it's just a stored image reference either way).
@@ -89,6 +99,14 @@ export async function rowToProduct(row) {
     // flagged it. Either source is enough — see that module for the
     // "top N by units sold in the last N days" logic.
     bestseller: row.tag === "Bestseller" || Boolean(row.auto_bestseller),
+    // True only when there's a real markdown to show — an old_price that's
+    // missing, equal to, or (through a sheet/admin typo) actually *lower*
+    // than the current price doesn't count as "on sale", even though the
+    // storefront still has an old_price value sitting there. Computed here
+    // rather than left for the frontend to infer, so every consumer of the
+    // API (storefront, admin dashboard, future integrations) agrees on
+    // what "on sale" means.
+    onSale: row.old_price != null && row.old_price > row.price,
     images: await getImages(row.id),
     variants: await getVariants(row.id),
   };
@@ -140,14 +158,15 @@ router.get("/", asyncHandler(async (req, res) => {
 // POST /api/products
 router.post("/", requireAdmin, asyncHandler(async (req, res) => {
   const { name, brand, category, color, gender, price, oldPrice, stock, status, tag, description, weight, variants } = req.body;
-  if (!name || !brand || !category || price == null) {
+  const brandNormalized = normalizeBrand(brand);
+  if (!name || !brandNormalized || !category || price == null) {
     return res.status(400).json({ error: "name, brand, category, and price are required" });
   }
   const result = await db.prepare(`
     INSERT INTO products (name, brand, category, color, gender, price, old_price, stock, status, tag, description, weight, rating, reviews)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
     RETURNING id
-  `).run(name, brand, category, color?.trim() || null, gender?.trim() || null, price, oldPrice ?? null, stock ?? 0, status ?? "available", tag ?? null, description?.trim() || null, weight ? Number(weight) : 0.3);
+  `).run(name, brandNormalized, category, color?.trim() || null, gender?.trim() || null, price, oldPrice ?? null, stock ?? 0, status ?? "available", tag ?? null, description?.trim() || null, weight ? Number(weight) : 0.3);
 
   await replaceVariants(result.lastInsertRowid, variants);
 
@@ -178,7 +197,7 @@ router.put("/:id", requireAdmin, asyncHandler(async (req, res) => {
     UPDATE products SET name=?, brand=?, category=?, color=?, gender=?, price=?, old_price=?, stock=?, status=?, tag=?, description=?, weight=?
     WHERE id=?
   `).run(
-    merged.name, merged.brand, merged.category,
+    merged.name, normalizeBrand(merged.brand) || existing.brand, merged.category,
     merged.color?.trim() || null, merged.gender?.trim() || null, merged.price,
     merged.oldPrice ?? null, merged.stock, merged.status, merged.tag ?? null,
     merged.description?.trim() || null,

@@ -115,7 +115,7 @@ export default function ProductDetail({ product, onClose, addToCart, toggleWish,
             )}
             <div className="detail-price">
               {peso(product.price)}
-              {product.oldPrice && <span className="old-price">{peso(product.oldPrice)}</span>}
+              {product.onSale && <span className="old-price">{peso(product.oldPrice)}</span>}
             </div>
             <span className={`status-badge inline ${st.cls}`}>{st.label}</span>
 
