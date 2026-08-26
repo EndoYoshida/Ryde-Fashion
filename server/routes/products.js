@@ -16,8 +16,9 @@ import { canonicalizeBrand } from "../brands.js";
 // product's row so future edits/deletes know which sheet row is theirs.
 // Best-effort, same contract as the stock/PO sheet writes elsewhere in
 // this app: a Sheets hiccup is logged, never surfaced as a failed save.
-function syncProductToSheet(product) {
-  writeProductToSheet(product).then(async (result) => {
+async function syncProductToSheet(product) {
+  try {
+    const result = await writeProductToSheet(product);
     if (!result.written) {
       console.warn(`Product ${product.id}: didn't sync to sheet: ${result.reason}`);
       return;
@@ -29,7 +30,9 @@ function syncProductToSheet(product) {
         console.error(`Product ${product.id}: sheet write succeeded but saving its new sku failed:`, err.message);
       }
     }
-  });
+  } catch (err) {
+    console.error(`Failed to sync product ${product.id} to sheet:`, err.message);
+  }
 }
 
 const router = Router();
@@ -150,7 +153,7 @@ export async function notifySubscribersNewProduct(product) {
 }
 
 // GET /api/products
-router.get("/", asyncHandler(async (req, res) => {
+router.get("/", asyncHandler(async (_req, res) => {
   const rows = await db.prepare("SELECT * FROM products ORDER BY id DESC").all();
   res.json(await Promise.all(rows.map(rowToProduct)));
 }));
@@ -176,11 +179,15 @@ router.post("/", requireAdmin, asyncHandler(async (req, res) => {
   // Let newsletter subscribers know a new product just went up. Not
   // awaited — the admin's "create product" request shouldn't wait on
   // however many emails need to go out.
-  notifySubscribersNewProduct(product);
+  try {
+    await notifySubscribersNewProduct(product);
+  } catch (err) {
+    console.error(`Failed to notify subscribers of new product:`, err.message);
+  }
 
   // Mirror the new product into the Google Sheet too, so adding it in
   // the admin dashboard shows up there as well as in the database.
-  syncProductToSheet({ ...product, sku: row.sku });
+  await syncProductToSheet({ ...product, sku: row.sku });
 
   res.status(201).json(product);
 }));
@@ -215,11 +222,15 @@ router.put("/:id", requireAdmin, asyncHandler(async (req, res) => {
   // as above.
   const isBackInStock = product.status === "available" && product.stock > 0;
   if (wasOutOfStock && isBackInStock) {
-    notifyWishlistersBackInStock(product);
+    try {
+    await notifyWishlistersBackInStock(product);
+  } catch (err) {
+    console.error(`Failed to notify wishlisters back in stock:`, err.message);
+  }
   }
 
   // Mirror the edit into the Google Sheet too.
-  syncProductToSheet({ ...product, sku: row.sku });
+  await syncProductToSheet({ ...product, sku: row.sku });
 
   res.json(product);
 }));
@@ -263,11 +274,14 @@ router.delete("/:id", requireAdmin, asyncHandler(async (req, res) => {
   // Mirror the delete into the Google Sheet too — blank its row so a
   // later pull sync doesn't resurrect it from the sheet's stale data.
   if (existing?.sku) {
-    clearProductRowInSheet(existing.sku).then((sheetResult) => {
+    try {
+      const sheetResult = await clearProductRowInSheet(existing.sku);
       if (!sheetResult.written) {
         console.warn(`Product ${req.params.id}: didn't clear sheet row: ${sheetResult.reason}`);
       }
-    });
+    } catch (err) {
+      console.error(`Failed to clear sheet row for product ${req.params.id}:`, err.message);
+    }
   }
 
   res.status(204).end();
@@ -292,12 +306,16 @@ router.post("/:id/images", requireAdmin, upload.array("images", 8), asyncHandler
     const file = req.files[i];
     const result = await insert.run(req.params.id, file.filename, maxOrder + 1 + i);
     // Fire-and-forget, same contract as syncProductToSheet/notify* below:
-    // embedding a photo calls out to Gemini and can take a couple seconds,
-    // so it shouldn't hold up the admin's upload response. If it fails
-    // (Gemini down, rate-limited, etc.) it's not lost — embedding stays
-    // NULL for that row and backfillProductEmbeddings() will pick it up
-    // next time it's run.
-    embedProductImage(result.lastInsertRowid, cloudinaryUrl(file.filename));
+// embedding a photo calls out to Gemini and can take a couple seconds,
+// so it shouldn't hold up the admin's upload response. If it fails
+// (Gemini down, rate-limited, etc.) it's not lost — embedding stays
+// NULL for that row and backfillProductEmbeddings() will pick it up
+// next time it's run.
+    try {
+      await embedProductImage(result.lastInsertRowid, cloudinaryUrl(file.filename));
+    } catch (err) {
+      console.error(`Failed to embed product image ${result.lastInsertRowid}:`, err.message);
+    }
   }
 
   res.status(201).json({ images: await getImages(req.params.id) });

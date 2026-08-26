@@ -6,9 +6,12 @@
 import "dotenv/config";
 import { backfillProductEmbeddings } from "../imageMatch.js";
 
-backfillProductEmbeddings()
-  .then(() => process.exit(0))
-  .catch((err) => {
+(async () => {
+  try {
+    await backfillProductEmbeddings();
+    process.exit(0);
+  } catch (err) {
     console.error("Backfill failed:", err);
     process.exit(1);
-  });
+  }
+})();

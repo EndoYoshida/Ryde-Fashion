@@ -79,26 +79,31 @@ export function usePhAddressCascade() {
     if (!address.provinceCode) { setCityOptions([]); return; }
     let cancelled = false;
     setLoadingCities(true);
-    const isNCR = address.provinceCode.startsWith("ncr:");
-    const load = isNCR
-      ? Promise.all(ncrDistrictCodesRef.current.map((code) => cities(code))).then((lists) => {
+    (async () => {
+      try {
+        const isNCR = address.provinceCode.startsWith("ncr:");
+        let list;
+        if (isNCR) {
+          const lists = await Promise.all(ncrDistrictCodesRef.current.map((code) => cities(code)));
           const merged = new Map();
           lists.flat().forEach((c) => {
             if (!merged.has(c.city_name)) merged.set(c.city_name, c);
           });
-          return [...merged.values()];
-        })
-      : cities(address.provinceCode);
+          list = [...merged.values()];
+        } else {
+          list = await cities(address.provinceCode);
+        }
 
-    load
-      .then((list) => {
         if (cancelled) return;
         const opts = list.map((c) => ({ code: c.city_code, name: c.city_name }));
         opts.sort((a, b) => a.name.localeCompare(b.name));
         setCityOptions(opts);
-      })
-      .catch((err) => console.error("Failed to load cities:", err))
-      .finally(() => !cancelled && setLoadingCities(false));
+      } catch (err) {
+        console.error("Failed to load cities:", err);
+      } finally {
+        if (!cancelled) setLoadingCities(false);
+      }
+    })();
     return () => { cancelled = true; };
   }, [address.provinceCode]);
 
@@ -110,7 +115,10 @@ export function usePhAddressCascade() {
     let cancelled = false;
     setLoadingBarangays(true);
     barangays(address.cityCode)
-      .then((list) => !cancelled && setBarangayOptions(list.map((b) => ({ code: b.brgy_code, name: b.brgy_name }))))
+      .then(async (list) => {
+        if (cancelled) return;
+        setBarangayOptions(list.map((b) => ({ code: b.brgy_code, name: b.brgy_name })));
+      })
       .catch((err) => console.error("Failed to load barangays:", err))
       .finally(() => !cancelled && setLoadingBarangays(false));
     return () => { cancelled = true; };

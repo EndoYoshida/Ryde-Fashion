@@ -63,9 +63,11 @@ router.post("/", publicWriteLimiter, asyncHandler(async (req, res) => {
   // Best-effort notification to the store's own inbox — a customer's
   // ticket is already saved at this point regardless of whether this
   // succeeds, so a failure here shouldn't fail their submission.
-  sendNewTicketNotificationEmail(ticket).catch((err) => {
+  try {
+    await sendNewTicketNotificationEmail(ticket);
+  } catch (err) {
     console.error("Failed to send new-ticket notification:", err.message);
-  });
+  }
 
   res.status(201).json(ticket);
 }));

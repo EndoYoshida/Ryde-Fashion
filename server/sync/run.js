@@ -17,11 +17,12 @@ if (!isSheetsSyncConfigured()) {
   process.exit(1);
 }
 
-runSheetsSync()
-  .then((summary) => {
+(async () => {
+  try {
+    const summary = await runSheetsSync();
     process.exit(summary.errors.length ? 1 : 0);
-  })
-  .catch((err) => {
+  } catch (err) {
     console.error("[sheets-sync] fatal error:", err);
     process.exit(1);
-  });
+  }
+})();

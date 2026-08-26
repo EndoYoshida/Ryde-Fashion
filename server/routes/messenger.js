@@ -36,6 +36,18 @@ const GEMINI_MODEL = "gemini-3.6-flash"; // free tier — Google's current-gen F
 const APP_ORIGIN = process.env.APP_ORIGIN || "http://localhost:4000";
 const faqImage = (filename) => `${APP_ORIGIN}/public/messenger/${filename}`;
 
+// Validate required environment variables
+if (!VERIFY_TOKEN) {
+  console.error("FB_VERIFY_TOKEN is not set in environment variables");
+}
+if (!PAGE_TOKEN) {
+  console.error("FB_PAGE_TOKEN is not set in environment variables");
+}
+if (!APP_SECRET) {
+  console.warn("FB_APP_SECRET is not set in environment variables - webhook signature verification will be skipped");
+}
+// Note: GEMINI_API_KEY is optional - the bot will work with keyword matching if not set
+
 // OWNER_PSID - your OWN personal Messenger PSID (Page-Scoped ID), so the
 // bot can message YOU directly when a customer asks for a human. This is
 // NOT your Facebook user ID or Page ID — it's an ID Meta generates that's
@@ -1249,7 +1261,7 @@ const senderQueues = new Map(); // senderId -> Promise (tail of that sender's qu
 
 function enqueueForSender(senderId, task) {
   const previousTail = senderQueues.get(senderId) || Promise.resolve();
-  const tail = previousTail.then(task, task).catch((err) => {
+  const tail = previousTail.finally(() => task()).catch((err) => {
     console.error(`[messenger] queued event failed for ${senderId}:`, err);
   });
   senderQueues.set(senderId, tail);
@@ -1412,12 +1424,14 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
             return;
           }
 
-          const match = imageUrl
-            ? await findMatchingProduct(imageUrl).catch((err) => {
-                console.error("[messenger] image match failed:", err.message);
-                return null;
-              })
-            : null;
+          let match = null;
+          if (imageUrl) {
+            try {
+              match = await findMatchingProduct(imageUrl);
+            } catch (err) {
+              console.error("[messenger] image match failed:", err.message);
+            }
+          }
 
           if (match && isConfidentMatch(match.distance)) {
             // Treat it exactly like a resolved text-based product search —
@@ -1482,14 +1496,16 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
             facts,
             fallbackText = `Thanks for your message! Let me check on that for you 😊`
           ) => {
-            const composed = await composeReply({
-              customerText: text,
-              facts,
-              history: historyText(senderId),
-            }).catch((err) => {
+            let composed = null;
+            try {
+              composed = await composeReply({
+                customerText: text,
+                facts,
+                history: historyText(senderId),
+              });
+            } catch (err) {
               console.error("Gemini compose failed:", err);
-              return null;
-            });
+            }
             const finalText = composed || fallbackText;
             await sendMessage(senderId, finalText);
             pushHistory(senderId, "bot", finalText);
@@ -1502,13 +1518,15 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
           // is unavailable (no API key, the call fails, or the free-tier
           // rate limit is hit) so the bot degrades gracefully instead of
           // going silent.
-          const interpretation = await interpretMessage(text, {
-            history: historyText(senderId),
-            focusProduct: focusProductText(senderId),
-          }).catch((err) => {
+          let interpretation = null;
+          try {
+            interpretation = await interpretMessage(text, {
+              history: historyText(senderId),
+              focusProduct: focusProductText(senderId),
+            });
+          } catch (err) {
             console.error("Gemini interpret failed:", err);
-            return null;
-          });
+          }
 
           if (!interpretation) {
             // --- Gemini unavailable/failed: old single-shot keyword path.
@@ -1811,7 +1829,13 @@ async function processMessagingEvent(event, senderId, text, hasImage) {
           }
 
           await replyNaturally(factsParts.join("\n"));
-          for (const step of afterReply) await step();
+          for (const step of afterReply) {
+            try {
+              await step();
+            } catch (err) {
+              console.error("[messenger] failed to execute afterReply step:", err);
+            }
+          }
 
           if (humanAgentRequested) {
             await notifyOwner(senderId, text, "Customer explicitly asked to speak with the owner.");

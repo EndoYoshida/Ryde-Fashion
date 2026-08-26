@@ -44,12 +44,19 @@ export async function reconcilePendingPaymongoOrders() {
     expiredCount++;
 
     const updated = await getOrderWithItems(order.id);
-    updatePaymentStatusInSheet(updated).then((r) => {
-      if (!r.written) console.warn(`Order ${updated.id}: didn't update sheet payment status: ${r.reason}`);
-    });
-    notifyPaymentExpiredMessenger(updated).catch((err) => {
+    try {
+      const sheetResult = await updatePaymentStatusInSheet(updated);
+      if (!sheetResult.written) {
+        console.warn(`Order ${updated.id}: didn't update sheet payment status: ${sheetResult.reason}`);
+      }
+    } catch (err) {
+      console.error(`Order ${updated.id}: failed to update sheet payment status:`, err.message);
+    }
+    try {
+      await notifyPaymentExpiredMessenger(updated);
+    } catch (err) {
       console.error(`Order ${updated.id}: failed to notify customer of expired payment:`, err.message);
-    });
+    }
     console.log(`[paymongo-reconcile] order ${order.id}: checkout session expired unpaid — marked payment_status='failed'.`);
   }
 

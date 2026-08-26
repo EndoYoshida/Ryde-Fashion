@@ -42,7 +42,13 @@ async function request(path, options = {}, auth = null) {
 /* ------------------------------- Admin auth ------------------------------ */
 export const loginAdmin = (username, password, totpCode) =>
   request("/admin/login", { method: "POST", body: JSON.stringify({ username, password, totpCode }) });
-export const logoutAdmin = () => request("/admin/logout", { method: "POST" }, "admin").catch(() => {});
+export const logoutAdmin = async () => {
+  try {
+    await request("/admin/logout", { method: "POST" }, "admin");
+  } catch {
+    // ignore
+  }
+};
 
 /* ------------------------------ Customer auth ----------------------------- */
 // Identity (password/Google) is handled by Firebase on the frontend; this
@@ -51,7 +57,13 @@ export const logoutAdmin = () => request("/admin/logout", { method: "POST" }, "a
 // are only used the first time a given Firebase account signs in.
 export const firebaseLogin = (idToken, username, phone) =>
   request("/auth/firebase", { method: "POST", body: JSON.stringify({ idToken, username, phone }) });
-export const logoutCustomer = () => request("/auth/logout", { method: "POST" }, "customer").catch(() => {});
+export const logoutCustomer = async () => {
+  try {
+    await request("/auth/logout", { method: "POST" }, "customer");
+  } catch {
+    // ignore
+  }
+};
 export const getMe = () => request("/auth/me", {}, "customer");
 export const updateMe = (changes) =>
   request("/auth/me", { method: "PATCH", body: JSON.stringify(changes) }, "customer");

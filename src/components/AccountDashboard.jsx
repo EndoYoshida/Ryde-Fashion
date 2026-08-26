@@ -341,7 +341,14 @@ function OrdersTab() {
   const [cancelError, setCancelError] = useState("");
 
   useEffect(() => {
-    api.getMyOrders().then(setOrders).catch((err) => setError(err.message || "Couldn't load your orders."));
+    (async () => {
+      try {
+        const orders = await api.getMyOrders();
+        setOrders(orders);
+      } catch (err) {
+        setError(err.message || "Couldn't load your orders.");
+      }
+    })();
   }, []);
 
   const handleCancel = async (orderId) => {

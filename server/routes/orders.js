@@ -127,19 +127,21 @@ export async function insertOrder({ id, customerName, email, phone, address, pay
 // flip) back to the Google Sheet, and mirror the PO into the "PO
 // Register"/"PO Items" tabs. Never lets a Sheets hiccup fail order
 // creation — same treatment as the rest of this file.
-export function announceNewOrder(order, stockUpdates) {
-  for (const { sku, newStock, newStatus } of stockUpdates) {
-    writeStockToSheet(sku, newStock, newStatus).then((result) => {
+export async function announceNewOrder(order, stockUpdates) {
+  try {
+    for (const { sku, newStock, newStatus } of stockUpdates) {
+      const result = await writeStockToSheet(sku, newStock, newStatus);
       if (!result.written) {
         console.warn(`Order ${order.id}: didn't update sheet stock for sku="${sku}": ${result.reason}`);
       }
-    });
-  }
-  pushOrderToSheet(order).then((result) => {
-    if (!result.pushed) {
-      console.warn(`Order ${order.id}: didn't push PO to sheet: ${result.reason}`);
     }
-  });
+    const pushResult = await pushOrderToSheet(order);
+    if (!pushResult.pushed) {
+      console.warn(`Order ${order.id}: didn't push PO to sheet: ${pushResult.reason}`);
+    }
+  } catch (err) {
+    console.error(`Failed to announce new order ${order.id}:`, err.message);
+  }
 }
 
 // GET /api/orders
@@ -310,9 +312,11 @@ router.patch("/:id/status", requireAdmin, asyncHandler(async (req, res) => {
   const result = await db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: "Order not found" });
   const order = await getOrderWithItems(req.params.id);
-  updateOrderStatusInSheet(order).then((r) => {
-    if (!r.written) console.warn(`Order ${order.id}: didn't update sheet status: ${r.reason}`);
-  });
+  try {
+    await updateOrderStatusInSheet(order);
+  } catch (err) {
+    console.warn(`Order ${order.id}: failed to update sheet status:`, err.message);
+  }
   res.json(order);
 }));
 
@@ -322,9 +326,11 @@ router.patch("/:id/payment-status", requireAdmin, asyncHandler(async (req, res) 
   const result = await db.prepare("UPDATE orders SET payment_status = ? WHERE id = ?").run(paymentStatus, req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: "Order not found" });
   const order = await getOrderWithItems(req.params.id);
-  updatePaymentStatusInSheet(order).then((r) => {
-    if (!r.written) console.warn(`Order ${order.id}: didn't update sheet payment status: ${r.reason}`);
-  });
+  try {
+    await updatePaymentStatusInSheet(order);
+  } catch (err) {
+    console.warn(`Order ${order.id}: failed to update sheet payment status:`, err.message);
+  }
   res.json(order);
 }));
 
@@ -381,16 +387,17 @@ router.patch("/:id/cancel", requireCustomer, asyncHandler(async (req, res) => {
 
   // Same fire-and-forget sheet write-backs as checkout/admin status
   // changes — a Sheets hiccup should never fail the cancellation itself.
-  for (const { sku, newStock, newStatus } of stockUpdates) {
-    writeStockToSheet(sku, newStock, newStatus).then((result) => {
+  try {
+    for (const { sku, newStock, newStatus } of stockUpdates) {
+      const result = await writeStockToSheet(sku, newStock, newStatus);
       if (!result.written) {
         console.warn(`Order ${req.params.id} cancel: didn't update sheet stock for sku="${sku}": ${result.reason}`);
       }
-    });
+    }
+    await updateOrderStatusInSheet(updated);
+  } catch (err) {
+    console.error(`Failed to update sheets after cancelling order ${req.params.id}:`, err.message);
   }
-  updateOrderStatusInSheet(updated).then((r) => {
-    if (!r.written) console.warn(`Order ${updated.id}: didn't update sheet status: ${r.reason}`);
-  });
 
   res.json(updated);
 }));

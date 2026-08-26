@@ -178,8 +178,13 @@ export default function App() {
   // needing a manual page refresh.
   useEffect(() => {
     if (!adminToken) return;
-    const interval = setInterval(() => {
-      api.getTickets().then(setTickets).catch(() => {});
+    const interval = setInterval(async () => {
+      try {
+        const tickets = await api.getTickets();
+        setTickets(tickets);
+      } catch (err) {
+        console.error("Failed to refresh tickets:", err.message);
+      }
     }, 30000);
     return () => clearInterval(interval);
   }, [adminToken]);
@@ -332,7 +337,7 @@ export default function App() {
   };
 
   // --- Customer account ---
-  const handleAuthSuccess = (token, customerData) => {
+  const handleAuthSuccess = async (token, customerData) => {
     localStorage.setItem("rydeCustomerToken", token);
     api.setCustomerToken(token);
     setCustomerTokenState(token);
@@ -340,9 +345,12 @@ export default function App() {
     setAuthOpen(false);
     // Pull their saved wishlist down from the server so items they
     // wishlisted on another device (or a previous session) show up here.
-    api.getMyWishlist()
-      .then(({ productIds }) => setWishlist(new Set(productIds)))
-      .catch((err) => console.error("Failed to load wishlist:", err));
+    try {
+      const { productIds } = await api.getMyWishlist();
+      setWishlist(new Set(productIds));
+    } catch (err) {
+      console.error("Failed to load wishlist:", err);
+    }
   };
   const handleCustomerLogout = () => {
     if (!window.confirm("Are you sure you want to log out?")) return;

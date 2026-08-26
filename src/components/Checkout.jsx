@@ -93,7 +93,14 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
   // storefront with PAYMONGO_SECRET_KEY not yet set just doesn't show it.
   const [paymongoConfig, setPaymongoConfig] = useState(null);
   useEffect(() => {
-    api.getPaymongoConfig().then(setPaymongoConfig).catch(() => setPaymongoConfig(null));
+    (async () => {
+      try {
+        const config = await api.getPaymongoConfig();
+        setPaymongoConfig(config);
+      } catch {
+        setPaymongoConfig(null);
+      }
+    })();
   }, []);
 
   // Handles landing back here after PayMongo's hosted checkout — either

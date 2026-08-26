@@ -33,7 +33,14 @@ export default function ProductDetail({ product, onClose, addToCart, toggleWish,
     setRated(false);
     setMyRating(0);
     if (product && customer) {
-      api.getMyRating(product.id).then((r) => setMyRating(r.rating)).catch(() => {});
+      (async () => {
+        try {
+          const r = await api.getMyRating(product.id);
+          setMyRating(r.rating);
+        } catch (err) {
+          console.error("Failed to load user rating:", err.message);
+        }
+      })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product?.id]);

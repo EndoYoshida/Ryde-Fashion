@@ -100,13 +100,13 @@ router.post("/webhook", asyncHandler(async (req, res) => {
 
   // Same fire-and-forget treatment as every other order mutation in
   // routes/orders.js — a Sheets hiccup should never fail the webhook.
-  updatePaymentStatusInSheet(updated).then((r) => {
-    if (!r.written) console.warn(`Order ${updated.id}: didn't update sheet payment status: ${r.reason}`);
-  });
-  if (wasPending && updated.status === "approved") {
-    updateOrderStatusInSheet(updated).then((r) => {
-      if (!r.written) console.warn(`Order ${updated.id}: didn't update sheet status: ${r.reason}`);
-    });
+  try {
+    await updatePaymentStatusInSheet(updated);
+    if (wasPending && updated.status === "approved") {
+      await updateOrderStatusInSheet(updated);
+    }
+  } catch (err) {
+    console.error(`Failed to update sheets for order ${updated.id}:`, err.message);
   }
 
   // A payment landing on an order that's already cancelled — e.g. a
@@ -124,13 +124,15 @@ router.post("/webhook", asyncHandler(async (req, res) => {
       `⚠️  Order ${updated.id}: PayMongo payment (₱${updated.total.toLocaleString()}) came through AFTER this order was already cancelled. ` +
       `Left status as "cancelled" — payment_status is now "paid". Needs manual review: confirm stock is still available, then either reinstate the order or refund the customer.`
     );
-    alertOwner(
-      `⚠️ PAYMENT ON A CANCELLED ORDER\n\n` +
-      `Order #${updated.id} (${updated.customer}) was already cancelled, but a payment of ₱${updated.total.toLocaleString()} just came through via PayMongo.\n\n` +
-      `The order was NOT auto-reinstated (its stock may already be sold to someone else). Please check the admin dashboard and either restore the order or refund the customer.`
-    ).catch((err) => {
+    try {
+      await alertOwner(
+        `⚠️ PAYMENT ON A CANCELLED ORDER\n\n` +
+        `Order #${updated.id} (${updated.customer}) was already cancelled, but a payment of ₱${updated.total.toLocaleString()} just came through via PayMongo.\n\n` +
+        `The order was NOT auto-reinstated (its stock may already be sold to someone else). Please check the admin dashboard and either restore the order or refund the customer.`
+      );
+    } catch (err) {
       console.error(`Order ${updated.id}: failed to alert owner about payment on a cancelled order:`, err.message);
-    });
+    }
   }
 
   // If this order came from the Messenger "buy now" flow, send the
@@ -143,9 +145,11 @@ router.post("/webhook", asyncHandler(async (req, res) => {
   // order!" receipt would be actively misleading while it's pending
   // manual review.
   if (updated.messengerPsid && !wasCancelled) {
-    sendOrderConfirmationMessenger(updated).catch((err) => {
+    try {
+      await sendOrderConfirmationMessenger(updated);
+    } catch (err) {
       console.error(`Order ${updated.id}: failed to send Messenger payment confirmation:`, err.message);
-    });
+    }
   }
 
   console.log(`Order ${updated.id}: marked paid via PayMongo (checkout session ${checkoutSessionId}).`);
