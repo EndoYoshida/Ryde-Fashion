@@ -73,7 +73,7 @@ const COLUMN_ALIASES = {
   oldPrice: ["oldprice", "originalprice", "wasprice"],
   stock: ["stock", "quantity", "qty"],
   status: ["status"],
-  description: ["description", "desc", "productdescription", "productdesc"],
+  description: ["description", "desc", "productdescription", "productdesc", "product-description", "product.description", "product description", "product_desc", "Product Description", "Product_Description"],
   weight: ["weight"],
   tag: ["tag", "label"],
   images: ["images", "image", "photos", "photo", "drivelinks", "driveimages"],
