@@ -73,7 +73,7 @@ const COLUMN_ALIASES = {
   oldPrice: ["oldprice", "originalprice", "wasprice"],
   stock: ["stock", "quantity", "qty"],
   status: ["status"],
-  description: ["description", "desc"],
+  description: ["description", "desc", "productdescription", "productdesc"],
   weight: ["weight"],
   tag: ["tag", "label"],
   images: ["images", "image", "photos", "photo", "drivelinks", "driveimages"],
@@ -485,6 +485,75 @@ export async function writeStockToSheet(sku, newStock, newStatus) {
     return { written: true };
   } catch (err) {
     console.error(`[sheets-sync] failed to write back stock for sku="${sku}":`, err.message);
+    return { written: false, reason: err.message };
+  }
+}
+
+// Writes one product's updated stock (and, if it just sold out, status)
+// back into its row in the RYDE INVENTORY ERP Sheet, right after a checkout
+// decrements it locally. This function mirrors writeStockToSheet but targets
+// the ERP inventory sheet instead of the main products sheet.
+//
+// newStatus is optional — pass it (e.g. "sold-out") when the order that
+// just went through dropped this item's stock to 0, so the ERP sheet's
+// status column flips from "available" to "sold-out" alongside the stock
+// number, in the same request. Leave it out for a partial decrement that
+// didn't empty the stock.
+//
+// Best-effort and non-blocking by design: any failure (sync not configured,
+// sku not found, no write access yet) is logged and swallowed rather than
+// surfaced to the shopper — a sheet write hiccup should never be able to
+// break checkout.
+//
+// Requires the service account to have Editor (not just Viewer) access
+// on the ERP Sheet.
+export async function writeStockToInventoryErp(sku, newStock, newStatus) {
+  if (!sku) return { written: false, reason: "product has no sku (not sheet-managed)" };
+  if (!isSheetsSyncConfigured()) return { written: false, reason: "sheet sync not configured" };
+  if (!process.env.SHEETS_SYNC_INVENTORY_ERP_SHEET_ID) return { written: false, reason: "ERP sheet ID not configured" };
+  if (process.env.SHEETS_SYNC_WRITE_INVENTORY_ERP === "false") return { written: false, reason: "writeback to ERP disabled" };
+
+  try {
+    const sheets = getSheetsClient();
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SHEETS_SYNC_INVENTORY_ERP_SHEET_ID,
+      range: process.env.SHEETS_SYNC_INVENTORY_ERP_RANGE || "Inventory",
+    });
+    const rows = res.data.values || [];
+    if (rows.length < HEADER_ROW + 1) return { written: false, reason: "ERP sheet is empty" };
+
+    const fieldMap = buildFieldMap(rows[HEADER_ROW - 1]);
+    if (fieldMap.stock == null) return { written: false, reason: 'ERP sheet has no "stock" column' };
+    if (fieldMap.sku == null) return { written: false, reason: 'ERP sheet has no "sku" column' };
+
+    const dataRows = rows.slice(HEADER_ROW + RESERVED_ROWS);
+    const rowIndex = dataRows.findIndex(
+      (row) => (row[fieldMap.sku] || "").toString().trim() === sku
+    );
+    if (rowIndex === -1) return { written: false, reason: `sku "${sku}" not found in ERP sheet` };
+
+    const sheetRowNumber = rowIndex + HEADER_ROW + RESERVED_ROWS + 1; // 1-indexing, past the header row, past any reserved template rows
+    const data = [{
+      range: `${process.env.SHEETS_SYNC_INVENTORY_ERP_RANGE || "Inventory"}!${columnIndexToLetter(fieldMap.stock)}${sheetRowNumber}`,
+      values: [[newStock]],
+    }];
+    // Only touch the status cell if we were asked to AND the sheet
+    // actually has a status column — some sheets omit it and just rely
+    // on the "status defaults to available" behavior from setup step 3.
+    if (newStatus && fieldMap.status != null) {
+      data.push({
+        range: `${process.env.SHEETS_SYNC_INVENTORY_ERP_RANGE || "Inventory"}!${columnIndexToLetter(fieldMap.status)}${sheetRowNumber}`,
+        values: [[newStatus]],
+      });
+    }
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: process.env.SHEETS_SYNC_INVENTORY_ERP_SHEET_ID,
+      requestBody: { valueInputOption: "RAW", data },
+    });
+    return { written: true };
+  } catch (err) {
+    console.error(`[sheets-sync] failed to write back stock to ERP for sku="${sku}":`, err.message);
     return { written: false, reason: err.message };
   }
 }

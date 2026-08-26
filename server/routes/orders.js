@@ -5,7 +5,7 @@ import { requireCustomer } from "../customerAuth.js";
 import { upload, cloudinaryUrl } from "../upload.js";
 import { sendOrderReceiptEmail } from "../email.js";
 import { publicWriteLimiter } from "../rateLimit.js";
-import { writeStockToSheet } from "../sync/sheetsSync.js";
+import { writeStockToSheet, writeStockToInventoryErp } from "../sync/sheetsSync.js";
 import { pushOrderToSheet, updateOrderStatusInSheet, updatePaymentStatusInSheet } from "../sync/poSheetSync.js";
 import { asyncHandler } from "../asyncHandler.js";
 import { createCheckoutSession, isPaymongoConfigured, paymongoEnabledMethods, isPaymongoTestMode } from "../paymongo.js";
@@ -124,15 +124,22 @@ export async function insertOrder({ id, customerName, email, phone, address, pay
 
 // Fire-and-forget side effects every newly-created order needs, regardless
 // of which route created it: write the new stock counts (and any sold-out
-// flip) back to the Google Sheet, and mirror the PO into the "PO
-// Register"/"PO Items" tabs. Never lets a Sheets hiccup fail order
-// creation — same treatment as the rest of this file.
+// flip) back to the Google Sheet and the RYDE INVENTORY ERP sheet, and mirror
+// the PO into the "PO Register"/"PO Items" tabs. Never lets a Sheets hiccup
+// fail order creation — same treatment as the rest of this file.
 export async function announceNewOrder(order, stockUpdates) {
   try {
     for (const { sku, newStock, newStatus } of stockUpdates) {
-      const result = await writeStockToSheet(sku, newStock, newStatus);
-      if (!result.written) {
-        console.warn(`Order ${order.id}: didn't update sheet stock for sku="${sku}": ${result.reason}`);
+      // Update main products sheet
+      const sheetResult = await writeStockToSheet(sku, newStock, newStatus);
+      if (!sheetResult.written) {
+        console.warn(`Order ${order.id}: didn't update sheet stock for sku="${sku}": ${sheetResult.reason}`);
+      }
+
+      // Update RYDE INVENTORY ERP sheet
+      const erpResult = await writeStockToInventoryErp(sku, newStock, newStatus);
+      if (!erpResult.written) {
+        console.warn(`Order ${order.id}: didn't update ERP sheet stock for sku="${sku}": ${erpResult.reason}`);
       }
     }
     const pushResult = await pushOrderToSheet(order);
@@ -389,9 +396,16 @@ router.patch("/:id/cancel", requireCustomer, asyncHandler(async (req, res) => {
   // changes — a Sheets hiccup should never fail the cancellation itself.
   try {
     for (const { sku, newStock, newStatus } of stockUpdates) {
-      const result = await writeStockToSheet(sku, newStock, newStatus);
-      if (!result.written) {
-        console.warn(`Order ${req.params.id} cancel: didn't update sheet stock for sku="${sku}": ${result.reason}`);
+      // Update main products sheet
+      const sheetResult = await writeStockToSheet(sku, newStock, newStatus);
+      if (!sheetResult.written) {
+        console.warn(`Order ${req.params.id} cancel: didn't update sheet stock for sku="${sku}": ${sheetResult.reason}`);
+      }
+
+      // Update RYDE INVENTORY ERP sheet
+      const erpResult = await writeStockToInventoryErp(sku, newStock, newStatus);
+      if (!erpResult.written) {
+        console.warn(`Order ${req.params.id} cancel: didn't update ERP sheet stock for sku="${sku}": ${erpResult.reason}`);
       }
     }
     await updateOrderStatusInSheet(updated);
