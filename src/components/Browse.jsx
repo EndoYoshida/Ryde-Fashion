@@ -38,10 +38,22 @@ export default function Browse({ products, openProduct, toggleWish, wishlist, ad
     if (search) list = list.filter((p) => (p.name + p.brand).toLowerCase().includes(search.toLowerCase()));
     if (availOnly) list = list.filter((p) => p.status === "available");
     if (saleOnly) list = list.filter(isOnSale);
-    if (sort === "price-asc") list = [...list].sort((a, b) => a.price - b.price);
-    if (sort === "price-desc") list = [...list].sort((a, b) => b.price - a.price);
-    if (sort === "popularity") list = [...list].sort((a, b) => b.reviews - a.reviews);
-    if (sort === "newest") list = [...list].sort((a, b) => b.id - a.id);
+
+    // Helper to sort available items first
+    const statusSort = (a, b) => {
+      const statusA = a.status === "available" ? 0 : 1;
+      const statusB = b.status === "available" ? 0 : 1;
+      return statusA - statusB;
+    };
+
+    if (sort === "price-asc") list = [...list].sort((a, b) => statusSort(a, b) || a.price - b.price);
+    if (sort === "price-desc") list = [...list].sort((a, b) => statusSort(a, b) || b.price - a.price);
+    if (sort === "popularity") list = [...list].sort((a, b) => statusSort(a, b) || b.reviews - a.reviews);
+    if (sort === "newest") list = [...list].sort((a, b) => statusSort(a, b) || b.id - a.id);
+    // If no sort matched (should not happen due to default), still apply status sort
+    if (["price-asc", "price-desc", "popularity", "newest"].indexOf(sort) === -1) {
+      list = [...list].sort(statusSort);
+    }
     return list;
   }, [products, categoryFilter, tagFilter, genderFilter, brandFilter, search, sort, priceMax, availOnly, saleOnly]);
 

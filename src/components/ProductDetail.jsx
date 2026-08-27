@@ -50,7 +50,17 @@ export default function ProductDetail({ product, onClose, addToCart, toggleWish,
   const disabled = product.status !== "available";
   // "You may also like" — same category as whatever the customer is
   // currently looking at, excluding this product itself.
-  const related = products.filter((p) => p.category === product.category && p.id !== product.id).slice(0, 4);
+  // Show available items first, then newest
+  const related = products
+    .filter((p) => p.category === product.category && p.id !== product.id)
+    .sort((a, b) => {
+      const statusA = a.status === "available" ? 0 : 1;
+      const statusB = b.status === "available" ? 0 : 1;
+      if (statusA !== statusB) return statusA - statusB;
+      // Tie-break by newest (higher id first)
+      return b.id - a.id;
+    })
+    .slice(0, 4);
   const images = product.images || [];
   const mainImgUrl = images[selectedImg]?.url;
   const mainImgFullSrc = mainImgUrl ? (mainImgUrl.startsWith("http") ? mainImgUrl : `${SERVER_ORIGIN}${mainImgUrl}`) : null;

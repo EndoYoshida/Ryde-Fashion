@@ -4,8 +4,17 @@ import BlossomDivider from "./ui/BlossomDivider";
 import ProductCard from "./ProductCard";
 
 export default function FeaturedProducts({ products, openProduct, toggleWish, wishlist, addToCart, goShop }) {
-  const featured = products.filter((p) => p.tag).concat(products.slice(0, 2)).slice(0, 8);
-  const unique = Array.from(new Map(featured.map((p) => [p.id, p])).values());
+  // Get tagged products and first two products, then remove duplicates
+  let list = products.filter((p) => p.tag).concat(products.slice(0, 2));
+  const unique = Array.from(new Map(list.map((p) => [p.id, p])).values());
+  // Sort by status: available first
+  const featured = unique
+    .sort((a, b) => {
+      const statusA = a.status === "available" ? 0 : 1;
+      const statusB = b.status === "available" ? 0 : 1;
+      return statusA - statusB;
+    })
+    .slice(0, 8);
   return (
     <section className="section alt">
       <div className="section-head">
@@ -14,7 +23,7 @@ export default function FeaturedProducts({ products, openProduct, toggleWish, wi
       </div>
       <BlossomDivider />
       <div className="prod-grid">
-        {unique.map((p) => (
+        {featured.map((p) => (
           <ProductCard key={p.id} p={p} openProduct={openProduct} toggleWish={toggleWish} wishlist={wishlist} addToCart={addToCart} />
         ))}
       </div>
