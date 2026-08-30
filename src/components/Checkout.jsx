@@ -471,7 +471,7 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
           <h4>Payment method</h4>
           {DEMO_MODE && (
             <p className="admin-form-error" style={{ marginBottom: 10 }}>
-              This site is currently a demo — please don&rsquo;t send real money via GCash or bank transfer. Choose Cash on Delivery to test checkout instead.
+              GCash and bank transfer are still under verification and aren&rsquo;t available yet — please use Pay Online (QR Ph) or Cash on Delivery to check out.
             </p>
           )}
           <div className="payment-grid">
