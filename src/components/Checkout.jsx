@@ -14,6 +14,11 @@ import { usePhAddressCascade } from "../hooks/usePhAddressCascade";
 // PAYMONGO_SECRET_KEY / PAYMONGO_PAYMENT_METHODS in server/.env).
 const DEMO_MODE = true;
 
+// While DEMO_MODE is on, these manual methods are shown but not selectable
+// (their receiving accounts are still pending verification) — only Pay
+// Online (QR Ph) and Cash on Delivery work right now.
+const DEMO_DISABLED_METHODS = DEMO_MODE ? ["gcash", "bdo", "unionbank"] : [];
+
 const PAYMENT_LABELS = {
   bdo: "Bank Transfer (BDO)",
   unionbank: "Bank Transfer (UnionBank)",
@@ -475,13 +480,25 @@ export default function Checkout({ cart, setView, clearCart, onOrderCreated, cus
             </p>
           )}
           <div className="payment-grid">
-            {payments.map((p) => (
-              <label key={p.id} className={`payment-option ${payment === p.id ? "active" : ""}`}>
-                <input type="radio" name="payment" checked={payment === p.id} onChange={() => { setPayment(p.id); clearProof(); }} />
-                <span className="payment-label">{p.label}</span>
-                <span className="payment-note">{p.note}</span>
-              </label>
-            ))}
+            {payments.map((p) => {
+              const isDisabled = DEMO_DISABLED_METHODS.includes(p.id);
+              return (
+                <label
+                  key={p.id}
+                  className={`payment-option ${payment === p.id ? "active" : ""} ${isDisabled ? "disabled" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="payment"
+                    checked={payment === p.id}
+                    disabled={isDisabled}
+                    onChange={() => { if (isDisabled) return; setPayment(p.id); clearProof(); }}
+                  />
+                  <span className="payment-label">{p.label}</span>
+                  <span className="payment-note">{isDisabled ? "Pending verification" : p.note}</span>
+                </label>
+              );
+            })}
           </div>
 
           {payment === "paymongo" && (

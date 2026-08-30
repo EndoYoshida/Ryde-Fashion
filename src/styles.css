@@ -367,6 +367,8 @@
 .payment-grid { display:flex; flex-direction:column; gap:10px; }
 .payment-option { display:flex; align-items:center; gap:10px; border:1px solid var(--beige); border-radius:5px; padding:13px 14px; cursor:pointer; }
 .payment-option.active { border-color:var(--gold); background:var(--cream); }
+.payment-option.disabled { cursor:not-allowed; opacity:0.5; background:var(--beige); }
+.payment-option.disabled .payment-note { color:var(--ink-soft); font-style:italic; }
 .payment-label { font-size:13.5px; font-weight:500; }
 .payment-note { font-size:11.5px; color:var(--ink-soft); margin-left:auto; }
 .upload-box { border:1px dashed var(--gold-light); border-radius:5px; padding:20px; text-align:center; margin-top:14px; }
